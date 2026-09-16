@@ -1,5 +1,29 @@
 export type UserPlan = 'free' | 'premium';
 
+export type UserRole = 'student' | 'admin';
+
+export interface UserProfile {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  photoURL: string | null;
+  role: UserRole;
+  plan: UserPlan;
+  status?: 'active' | 'pending' | 'blocked';
+  createdAt?: any;
+  lastLoginAt?: any;
+}
+
+export interface MigrationSummary {
+  hasLegacyData: boolean;
+  answersCount: number;
+  flashcardsCount: number;
+  simuladosCount: number;
+  bookmarksCount: number;
+  notesCount: number;
+  readingProgressCount: number;
+}
+
 export type ThemeMode = 'light' | 'dark';
 
 export type MedicalCycle = 'basico' | 'clinico' | 'internato_residencia';
@@ -34,8 +58,41 @@ export interface CompendiumSection {
   keyTakeaways: string[];
   clinicalPearl?: string;
   warningAlert?: string;
+  examConsensus?: string;
   diagramSvgKey?: string;
 }
+
+/** Campos de CompendiumSection que entram no snapshot de histórico (prosa editável). */
+export interface CompendiumSectionSnapshot {
+  title: string;
+  mechanismTag?: string;
+  content: string;
+  keyTakeaways: string[];
+  clinicalPearl?: string;
+  warningAlert?: string;
+  examConsensus?: string;
+}
+
+/** Snapshot completo de uma seção de compêndio, gravado a cada edição via CMS. */
+export interface MaterialSectionVersion {
+  id: string;
+  materialSectionId: string;
+  changedBy: string | null;
+  changedFields: string[];
+  reason: string | null;
+  beforeSnapshot: CompendiumSectionSnapshot;
+  afterSnapshot: CompendiumSectionSnapshot;
+  createdAt: string;
+}
+
+export type StudyLens =
+  | 'fisiopatologia'
+  | 'diagnostico'
+  | 'conduta'
+  | 'farmacologia'
+  | 'alto_rendimento';
+
+export type EditorialStatus = 'completo' | 'em_atualizacao' | 'em_revisao';
 
 export interface Compendium {
   id: string;
@@ -43,14 +100,31 @@ export interface Compendium {
   themeId: string;
   title: string;
   subtitle: string;
+  /** Número de módulo do currículo de origem (ex. "M7"), quando aplicável — nem todo material tem. */
+  moduleNumber?: number;
   estimatedReadTimeMinutes: number;
   lastUpdated: string;
   author: string;
   mode?: 'atlas' | 'mecanismos';
+  studyLens?: StudyLens;
+  editorialStatus?: EditorialStatus;
+  /** Controla visibilidade para estudantes via RLS (materials.status). Distinto de editorialStatus. */
+  publicationStatus?: 'draft' | 'published' | 'archived';
   tags?: string[];
   dependencies?: { title: string; linkId?: string }[];
   sections: CompendiumSection[];
   references: string[];
+  /**
+   * Vínculo estruturado de cada item de `references` a uma fonte curada
+   * (material_references.source_id -> sources), quando existir. Mesmo
+   * índice de `references` (`referenceSources[i]` descreve `references[i]`);
+   * ausente ou `linked: false` quando o item é só bibliografia geral em
+   * texto livre (hoje o caso dos 33 compêndios carregados — nenhum tem
+   * source_id curado, ver AGENTS.md/relatório de auditoria 2026-09-07).
+   * `url` só aparece quando a fonte tem identificador verificável
+   * (doi/pmid/url) — nunca inventada.
+   */
+  referenceSources?: { linked: boolean; sourceId?: string; url?: string; verificacao?: string }[];
   isPremiumOnly?: boolean;
 }
 
@@ -78,47 +152,13 @@ export interface Question {
   generalCommentary: string;
   highYieldSummary: string;
   tags: string[];
+  /** Controla visibilidade para estudantes via RLS (questions.status). */
+  publicationStatus?: 'draft' | 'published' | 'archived';
   flashcardTemplate?: {
     front: string;
     back: string;
     mechanismNote: string;
   };
-  isPremiumOnly?: boolean;
-}
-
-export interface ClinicalCaseStep {
-  id: string;
-  stage: 'anamnese' | 'exame_fisico' | 'exames_complementares' | 'diagnostico' | 'conduta';
-  stageTitle: string;
-  clinicalData: string;
-  vitalsAndLabs?: Record<string, string>;
-  question: {
-    prompt: string;
-    options: Array<{
-      id: string;
-      text: string;
-      isBestChoice: boolean;
-      score: number;
-      clinicalFeedback: string;
-    }>;
-  };
-}
-
-export interface ClinicalCase {
-  id: string;
-  disciplineId: string;
-  themeId: string;
-  compendiumRefId: string;
-  title: string;
-  patientAge: number;
-  patientGender: 'M' | 'F';
-  chiefComplaint: string;
-  difficulty: DifficultyLevel;
-  estimatedMinutes: number;
-  summary: string;
-  steps: ClinicalCaseStep[];
-  finalDiscussion: string;
-  clinicalTakeaways: string[];
   isPremiumOnly?: boolean;
 }
 
@@ -149,31 +189,27 @@ export interface Flashcard {
   difficulty: DifficultyLevel;
   srs: FlashcardSRS;
   isCustom?: boolean;
+  /**
+   * Fontes bibliográficas herdadas da questão de origem (via
+   * questionOriginId -> question_references -> sources), distintas de
+   * `compendiumRefId` (material de origem dentro do próprio produto).
+   * Ausente quando o flashcard não tem questão de origem, ou a questão de
+   * origem não tem referência estruturada (não inventada).
+   */
+  bibliographicSources?: { sourceId: string; citationText: string; url?: string; verificacao?: string }[];
 }
 
 export type AppView =
   | 'dashboard'
+  | 'thematic-study'
   | 'compendiums'
   | 'compendium_reader'
   | 'questions'
   | 'simulado_active'
-  | 'cases'
-  | 'case_detail'
   | 'flashcards'
   | 'flashcard_reviewer'
   | 'caderno_erros'
   | 'admin';
-
-export interface UserProfile {
-  id: string;
-  name: string;
-  email: string;
-  cycle: MedicalCycle;
-  plan: UserPlan;
-  streakDays: number;
-  avatarUrl?: string;
-}
-
 
 export interface QuestionAnswerRecord {
   questionId: string;
@@ -183,6 +219,42 @@ export interface QuestionAnswerRecord {
   timeSpentSeconds: number;
   errorReason?: 'lacuna_teorica' | 'pegadinha' | 'falta_atencao' | 'tempo_esgotado' | 'raciocinio_clinico';
   userNotes?: string;
+  answerMode?: 'open_recall' | 'multiple_choice';
+  answerStrategy?: 'recognition' | 'elimination' | 'false_confidence' | 'guess';
+}
+
+// Gabarito de uma questão (quem está correta, explicação por alternativa),
+// obtido via RPC (submit_question_attempt ou get_question_review) — nunca
+// por SELECT direto em question_option_keys/question_answer_keys, que não
+// têm policy de leitura para estudante (ver rls_policies.sql).
+export interface QuestionReviewOption {
+  optionId: string;
+  letter: 'A' | 'B' | 'C' | 'D' | 'E';
+  isCorrect: boolean;
+  explanation: string;
+}
+
+// Fonte bibliográfica vinculada de forma estruturada a uma questão
+// (question_references -> sources). Vínculo por QUESTÃO inteira, não por
+// alternativa — o acervo (banco-questoes.json) só tem `referencias[]` no
+// nível da questão, não uma fonte por alternativa. `url` é derivada de
+// identificadores conhecidos (doi/pmid/url) só quando presentes — nunca
+// inventada quando a fonte não tem identificador verificável.
+export interface QuestionReviewReference {
+  sourceId: string;
+  citationText: string;
+  tipo: string;
+  verificacao: string;
+  url?: string;
+}
+
+export interface QuestionReviewResult {
+  isCorrect: boolean;
+  correctOptionId: string;
+  generalCommentary: string;
+  highYieldSummary: string;
+  options: QuestionReviewOption[];
+  references: QuestionReviewReference[];
 }
 
 export interface SimuladoConfig {
@@ -227,4 +299,113 @@ export interface UserStats {
   lastActiveDate: string;
   cardsReviewedToday: number;
   compendiumsReadCount: number;
+}
+
+export type FeedbackType = 'sugestao' | 'problema' | 'elogio';
+
+export type FeedbackStatus = 'pendente' | 'em_analise' | 'resolvido';
+
+export interface UserFeedback {
+  id: string;
+  type: FeedbackType;
+  title: string;
+  description: string;
+  createdAt: string;
+  // Preenchido pelo servidor (trigger `set_feedback_updated_at`, migration
+  // sync_reliability_categorias_8_9) — ausente em itens só-locais que ainda
+  // não foram confirmados pelo servidor. Nunca calculado no cliente.
+  updatedAt?: string;
+  userId?: string | null;
+  userEmail?: string | null;
+  questionId?: string | null;
+  materialId?: string | null;
+  status: FeedbackStatus;
+}
+
+export type QuestionReactionValue = 'up' | 'down';
+
+export interface LastReadingSession {
+  compendiumId: string;
+  sectionId?: string;
+  compendiumTitle: string;
+  themeId?: string;
+  themeName?: string;
+  disciplineId?: string;
+  disciplineName?: string;
+  sectionTitle?: string;
+  updatedAt: number;
+}
+
+// ============================================================================
+// Proveniência editorial e atestação humana (Prompt 23-B).
+// Ver supabase/migrations/20260914120000_content_provenance_attestation.sql.
+// ============================================================================
+
+/**
+ * Rótulo de exibição do estado de proveniência de um material/questão,
+ * calculado server-side por get_provenance_status() — nunca inferido no
+ * cliente (evitaria recomputar o hash canônico do conteúdo).
+ */
+export type ProvenanceStatus =
+  | 'legacy_unmapped'
+  | 'em_revisao'
+  | 'aprovado_para_esta_versao'
+  | 'aprovacao_desatualizada';
+
+export interface ContentRevision {
+  id: string;
+  materialId: string | null;
+  questionId: string | null;
+  revisionNumber: number;
+  snapshotHash: string;
+  policyVersion: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export type ClaimKind = 'source_claim' | 'synthesized_claim' | 'inference';
+export type ClaimDecision = 'pendente' | 'aprovado' | 'requer_correcao_ou_fonte' | 'inferencia_aceita';
+export type RiskCategory = 'alto' | 'medio' | 'baixo';
+
+export interface Claim {
+  id: string;
+  contentRevisionId: string;
+  claimText: string;
+  claimKind: ClaimKind;
+  contentLocator: string;
+  riskCategory: RiskCategory | null;
+  requiresSource: boolean;
+  decision: ClaimDecision;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  sortOrder: number;
+}
+
+export type EvidenceRelation = 'supports' | 'contextualizes' | 'contradicts';
+export type ConsultationBasis = 'directly_consulted' | 'indirectly_reported';
+export type SourceConfidence = 'alta' | 'media' | 'baixa';
+
+export interface ClaimSource {
+  id: string;
+  claimId: string;
+  sourceId: string;
+  evidenceRelation: EvidenceRelation;
+  consultationBasis: ConsultationBasis;
+  sourceLocator: string | null;
+  verified: boolean;
+  confidence: SourceConfidence | null;
+  sortOrder: number;
+}
+
+export type ContentReviewDecision = 'aprovado' | 'rejeitado';
+
+export interface ContentReview {
+  id: string;
+  contentRevisionId: string;
+  reviewerUserId: string;
+  decision: ContentReviewDecision;
+  checklist: Record<string, unknown>;
+  policyVersion: string;
+  revisionHash: string;
+  createdAt: string;
 }

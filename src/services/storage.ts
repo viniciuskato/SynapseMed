@@ -3,7 +3,6 @@ import {
   Theme,
   Compendium,
   Question,
-  ClinicalCase,
   Flashcard,
   QuestionAnswerRecord,
   SimuladoSessionData,
@@ -11,34 +10,66 @@ import {
   UserStats,
   ErrorLogItem,
   ThemeMode,
+  MigrationSummary,
+  UserFeedback,
+  LastReadingSession,
 } from '../types';
 import {
   INITIAL_DISCIPLINES,
   INITIAL_THEMES,
   INITIAL_COMPENDIUMS,
   INITIAL_QUESTIONS,
-  INITIAL_CLINICAL_CASES,
   INITIAL_FLASHCARDS,
 } from '../data/mockData';
 import { calculateNextSRS, createInitialSRS } from './srsAlgorithm';
+import { onActiveUserChanged } from './syncQueue';
+import { recoverLegacyLocalProgress } from './legacyRecovery';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   DISCIPLINES: 'synapse_disciplines_v1',
   THEMES: 'synapse_themes_v1',
   COMPENDIUMS: 'synapse_compendiums_v1',
   QUESTIONS: 'synapse_questions_v1',
-  CLINICAL_CASES: 'synapse_clinical_cases_v1',
   FLASHCARDS: 'synapse_flashcards_v1',
   ANSWERS: 'synapse_answers_v1',
   READING_PROGRESS: 'synapse_reading_progress_v1',
   BOOKMARKS: 'synapse_bookmarks_v1',
   NOTES: 'synapse_notes_v1',
+  NOTES_BASE_VERSION: 'synapse_notes_base_version_v1',
   SIMULADOS: 'synapse_simulados_v1',
   USER_PLAN: 'synapse_user_plan_v1',
   ERROR_LOG: 'synapse_error_log_v1',
   HIGHLIGHTS: 'synapse_compendium_highlights_v1',
   THEME: 'synapse_theme_v1',
+  FEEDBACK: 'synapse_feedback_v1',
+  QUESTION_REACTIONS: 'synapse_question_reactions_v1',
+  LAST_READING_SESSION: 'synapse_last_reading_session_v1',
+  DISMISSED_READING_SHORTCUT: 'synapse_dismissed_reading_shortcut_v1',
 };
+
+// Current active user ID for isolated storage
+let currentUserId: string | null = null;
+
+export function setStorageUser(uid: string | null): void {
+  currentUserId = uid;
+  onActiveUserChanged(uid);
+  if (uid) {
+    // Best-effort: enfileira progresso local pré-existente ainda não confirmado no
+    // servidor (ver docs/SINCRONIZACAO-CONFIAVEL.md, Etapa 5). Nunca apaga dado local.
+    void recoverLegacyLocalProgress(uid);
+  }
+}
+
+export function getStorageUser(): string | null {
+  return currentUserId;
+}
+
+// User-isolated key generator: keeps global keys global, and prefixes personal keys with UID
+function getUserKey(baseKey: string): string {
+  if (!currentUserId) return baseKey;
+  const suffix = baseKey.replace(/^synapse_/, '');
+  return `synapse_${currentUserId}_${suffix}`;
+}
 
 // Safe LocalStorage helpers
 function getItem<T>(key: string, defaultValue: T): T {
@@ -60,7 +91,15 @@ function setItem<T>(key: string, value: T): void {
 }
 
 export const StorageService = {
-  // --- Content Loaders ---
+  // --- Active User Management ---
+  setActiveUser(uid: string | null): void {
+    setStorageUser(uid);
+  },
+  getActiveUser(): string | null {
+    return getStorageUser();
+  },
+
+  // --- Content Loaders (Globais / Compartilhados) ---
   getDisciplines(): Discipline[] {
     return getItem<Discipline[]>(STORAGE_KEYS.DISCIPLINES, INITIAL_DISCIPLINES);
   },
@@ -117,32 +156,20 @@ export const StorageService = {
     this.saveQuestions(all);
   },
 
-  getClinicalCases(): ClinicalCase[] {
-    return getItem<ClinicalCase[]>(STORAGE_KEYS.CLINICAL_CASES, INITIAL_CLINICAL_CASES);
-  },
-  saveClinicalCases(cases: ClinicalCase[]): void {
-    setItem(STORAGE_KEYS.CLINICAL_CASES, cases);
-  },
-  saveClinicalCase(cCase: ClinicalCase): void {
-    const all = this.getClinicalCases();
-    const idx = all.findIndex((c) => c.id === cCase.id);
-    if (idx >= 0) {
-      all[idx] = cCase;
-    } else {
-      all.unshift(cCase);
-    }
-    this.saveClinicalCases(all);
-  },
-
+  // --- Flashcards (Isolados por UID, com preservação dos cards padrão para cada novo usuário) ---
   getFlashcards(): Flashcard[] {
-    const cards = getItem<Flashcard[]>(STORAGE_KEYS.FLASHCARDS, INITIAL_FLASHCARDS);
+    const key = getUserKey(STORAGE_KEYS.FLASHCARDS);
+    if (currentUserId && localStorage.getItem(key) === null) {
+      setItem(key, INITIAL_FLASHCARDS);
+    }
+    const cards = getItem<Flashcard[]>(key, INITIAL_FLASHCARDS);
     return cards.map((c) => ({
       ...c,
       srs: c.srs || createInitialSRS(),
     }));
   },
   saveFlashcards(flashcards: Flashcard[]): void {
-    setItem(STORAGE_KEYS.FLASHCARDS, flashcards);
+    setItem(getUserKey(STORAGE_KEYS.FLASHCARDS), flashcards);
   },
   saveFlashcard(flashcard: Flashcard): Flashcard {
     const all = this.getFlashcards();
@@ -176,8 +203,6 @@ export const StorageService = {
     }
   },
 
-
-  // Create flashcard directly from a question with 1 click!
   createFlashcardFromQuestion(question: Question): Flashcard {
     const template = question.flashcardTemplate || {
       front: `[${question.institution} ${question.year}] ${question.questionStem.slice(0, 180)}...`,
@@ -186,7 +211,7 @@ export const StorageService = {
     };
 
     const newCard: Flashcard = {
-      id: `fc-from-q-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: crypto.randomUUID(),
       disciplineId: question.disciplineId,
       themeId: question.themeId,
       compendiumRefId: question.compendiumRefId,
@@ -204,7 +229,6 @@ export const StorageService = {
     return newCard;
   },
 
-  // Review flashcard with SM-2 rating
   reviewFlashcard(cardId: string, rating: 1 | 2 | 3 | 4): Flashcard | null {
     const cards = this.getFlashcards();
     const idx = cards.findIndex((c) => c.id === cardId);
@@ -219,16 +243,15 @@ export const StorageService = {
     return cards[idx];
   },
 
-  // --- Answers & Error Logging ---
+  // --- Answers & Error Logging (Isolados por UID) ---
   getAnswers(): Record<string, QuestionAnswerRecord> {
-    return getItem<Record<string, QuestionAnswerRecord>>(STORAGE_KEYS.ANSWERS, {});
+    return getItem<Record<string, QuestionAnswerRecord>>(getUserKey(STORAGE_KEYS.ANSWERS), {});
   },
   recordAnswer(record: QuestionAnswerRecord): void {
     const answers = this.getAnswers();
     answers[record.questionId] = record;
-    setItem(STORAGE_KEYS.ANSWERS, answers);
+    setItem(getUserKey(STORAGE_KEYS.ANSWERS), answers);
 
-    // If answer is incorrect, log to Error Notebook
     if (!record.isCorrect) {
       const errorLogs = this.getErrorLogs();
       const existingIdx = errorLogs.findIndex((e) => e.questionId === record.questionId);
@@ -252,25 +275,25 @@ export const StorageService = {
       } else {
         errorLogs.unshift(errorItem);
       }
-      setItem(STORAGE_KEYS.ERROR_LOG, errorLogs);
+      setItem(getUserKey(STORAGE_KEYS.ERROR_LOG), errorLogs);
     }
   },
 
   getErrorLogs(): ErrorLogItem[] {
-    return getItem<ErrorLogItem[]>(STORAGE_KEYS.ERROR_LOG, []);
+    return getItem<ErrorLogItem[]>(getUserKey(STORAGE_KEYS.ERROR_LOG), []);
   },
   updateErrorLog(errorItem: ErrorLogItem): void {
     const logs = this.getErrorLogs();
     const idx = logs.findIndex((e) => e.id === errorItem.id || e.questionId === errorItem.questionId);
     if (idx >= 0) {
       logs[idx] = errorItem;
-      setItem(STORAGE_KEYS.ERROR_LOG, logs);
+      setItem(getUserKey(STORAGE_KEYS.ERROR_LOG), logs);
     }
   },
 
-  // --- Reading Progress ---
+  // --- Reading Progress (Isolado por UID) ---
   getReadingProgress(): Record<string, { readSectionIds: string[]; percent: number }> {
-    return getItem(STORAGE_KEYS.READING_PROGRESS, {});
+    return getItem(getUserKey(STORAGE_KEYS.READING_PROGRESS), {});
   },
   toggleSectionRead(compendiumId: string, sectionId: string, totalSections: number): number {
     const progress = this.getReadingProgress();
@@ -283,25 +306,50 @@ export const StorageService = {
     }
     compProgress.percent = Math.round((compProgress.readSectionIds.length / Math.max(1, totalSections)) * 100);
     progress[compendiumId] = compProgress;
-    setItem(STORAGE_KEYS.READING_PROGRESS, progress);
+    setItem(getUserKey(STORAGE_KEYS.READING_PROGRESS), progress);
     return compProgress.percent;
   },
 
-  // --- Bookmarks ---
+  // --- Last Reading Session (Isolado por UID) ---
+  getLastReadingSession(): LastReadingSession | null {
+    return getItem<LastReadingSession | null>(getUserKey(STORAGE_KEYS.LAST_READING_SESSION), null);
+  },
+  saveLastReadingSession(session: LastReadingSession | null): void {
+    if (!session) {
+      localStorage.removeItem(getUserKey(STORAGE_KEYS.LAST_READING_SESSION));
+    } else {
+      setItem(getUserKey(STORAGE_KEYS.LAST_READING_SESSION), session);
+    }
+  },
+  getDismissedReadingShortcut(): { compendiumId: string; dismissedAt: string } | null {
+    return getItem<{ compendiumId: string; dismissedAt: string } | null>(
+      getUserKey(STORAGE_KEYS.DISMISSED_READING_SHORTCUT),
+      null
+    );
+  },
+  dismissReadingShortcut(compendiumId: string): void {
+    setItem(getUserKey(STORAGE_KEYS.DISMISSED_READING_SHORTCUT), {
+      compendiumId,
+      dismissedAt: new Date().toISOString(),
+    });
+  },
+  clearDismissedReadingShortcut(): void {
+    localStorage.removeItem(getUserKey(STORAGE_KEYS.DISMISSED_READING_SHORTCUT));
+  },
+
+  // --- Bookmarks (Isolado por UID) ---
   getBookmarks(): {
     questions: string[];
     compendiums: string[];
     flashcards: string[];
-    clinicalCases: string[];
   } {
-    return getItem(STORAGE_KEYS.BOOKMARKS, {
+    return getItem(getUserKey(STORAGE_KEYS.BOOKMARKS), {
       questions: [],
       compendiums: [],
       flashcards: [],
-      clinicalCases: [],
     });
   },
-  toggleBookmark(type: 'questions' | 'compendiums' | 'flashcards' | 'clinicalCases', id: string): boolean {
+  toggleBookmark(type: 'questions' | 'compendiums' | 'flashcards', id: string): boolean {
     const bookmarks = this.getBookmarks();
     const list = bookmarks[type];
     const idx = list.indexOf(id);
@@ -313,35 +361,74 @@ export const StorageService = {
       list.push(id);
       isBookmarked = true;
     }
-    setItem(STORAGE_KEYS.BOOKMARKS, bookmarks);
+    setItem(getUserKey(STORAGE_KEYS.BOOKMARKS), bookmarks);
     return isBookmarked;
   },
 
-  // --- Notes ---
+  // --- Notes (Isolado por UID) ---
   getNotes(): Record<string, string> {
-    return getItem<Record<string, string>>(STORAGE_KEYS.NOTES, {});
+    return getItem<Record<string, string>>(getUserKey(STORAGE_KEYS.NOTES), {});
   },
   saveNote(targetId: string, noteText: string): void {
     const notes = this.getNotes();
     notes[targetId] = noteText;
-    setItem(STORAGE_KEYS.NOTES, notes);
+    setItem(getUserKey(STORAGE_KEYS.NOTES), notes);
+  },
+  // "Base version" que este dispositivo conheceu da nota no servidor
+  // (updated_at da última leitura/gravação bem-sucedida) — usada para
+  // detectar conflito real (outro dispositivo editou a mesma nota desde a
+  // última vez que este dispositivo a viu) sem construir um editor
+  // colaborativo. Nunca é a fonte de verdade do texto, só de "o que eu já vi".
+  getNoteBaseVersion(targetId: string): string | null {
+    const map = getItem<Record<string, string>>(getUserKey(STORAGE_KEYS.NOTES_BASE_VERSION), {});
+    return map[targetId] ?? null;
+  },
+  setNoteBaseVersion(targetId: string, updatedAt: string): void {
+    const map = getItem<Record<string, string>>(getUserKey(STORAGE_KEYS.NOTES_BASE_VERSION), {});
+    map[targetId] = updatedAt;
+    setItem(getUserKey(STORAGE_KEYS.NOTES_BASE_VERSION), map);
   },
 
-  // --- Highlights ---
+  // --- Highlights (Isolado por UID) ---
   getHighlights(): Record<string, Array<{ text: string; color: string; timestamp: string }>> {
-    return getItem(STORAGE_KEYS.HIGHLIGHTS, {});
+    return getItem(getUserKey(STORAGE_KEYS.HIGHLIGHTS), {});
   },
   addHighlight(compendiumId: string, text: string, color = 'amber'): void {
     const highlights = this.getHighlights();
     const list = highlights[compendiumId] || [];
     list.push({ text, color, timestamp: new Date().toISOString() });
     highlights[compendiumId] = list;
-    setItem(STORAGE_KEYS.HIGHLIGHTS, highlights);
+    setItem(getUserKey(STORAGE_KEYS.HIGHLIGHTS), highlights);
   },
 
-  // --- Simulados Sessions ---
+  // --- Feedback dos Participantes (Isolado por UID no namespace do usuário) ---
+  getFeedbacks(): UserFeedback[] {
+    return getItem<UserFeedback[]>(getUserKey(STORAGE_KEYS.FEEDBACK), []);
+  },
+  saveFeedback(feedback: UserFeedback): void {
+    const list = this.getFeedbacks();
+    list.unshift(feedback);
+    setItem(getUserKey(STORAGE_KEYS.FEEDBACK), list);
+  },
+
+  // --- Reação rápida 👍/👎 por questão (Isolado por UID) ---
+  getQuestionReactions(): Record<string, 'up' | 'down'> {
+    return getItem<Record<string, 'up' | 'down'>>(getUserKey(STORAGE_KEYS.QUESTION_REACTIONS), {});
+  },
+  setQuestionReaction(questionId: string, reaction: 'up' | 'down'): void {
+    const reactions = this.getQuestionReactions();
+    reactions[questionId] = reaction;
+    setItem(getUserKey(STORAGE_KEYS.QUESTION_REACTIONS), reactions);
+  },
+  removeQuestionReaction(questionId: string): void {
+    const reactions = this.getQuestionReactions();
+    delete reactions[questionId];
+    setItem(getUserKey(STORAGE_KEYS.QUESTION_REACTIONS), reactions);
+  },
+
+  // --- Simulados Sessions (Isolado por UID) ---
   getSimulados(): SimuladoSessionData[] {
-    return getItem<SimuladoSessionData[]>(STORAGE_KEYS.SIMULADOS, []);
+    return getItem<SimuladoSessionData[]>(getUserKey(STORAGE_KEYS.SIMULADOS), []);
   },
   saveSimuladoSession(session: SimuladoSessionData): void {
     const list = this.getSimulados();
@@ -351,10 +438,10 @@ export const StorageService = {
     } else {
       list.unshift(session);
     }
-    setItem(STORAGE_KEYS.SIMULADOS, list);
+    setItem(getUserKey(STORAGE_KEYS.SIMULADOS), list);
   },
 
-  // --- User Profile & Plan ---
+  // --- User Profile & Plan (Isolado por UID) ---
   getUserProfile(): {
     id: string;
     name: string;
@@ -366,9 +453,9 @@ export const StorageService = {
   } {
     const plan = this.getUserPlan();
     return {
-      id: 'user-med-1',
-      name: 'Dr. Lucas Medeiros',
-      email: 'lucas.med@synapsemed.com.br',
+      id: currentUserId || 'user-med-1',
+      name: 'Estudante NexusMed',
+      email: '',
       cycle: 'clinico',
       plan,
       streakDays: 4,
@@ -379,15 +466,15 @@ export const StorageService = {
     return this.getUserProfile();
   },
   getUserPlan(): UserPlan {
-    return getItem<UserPlan>(STORAGE_KEYS.USER_PLAN, 'premium');
+    return getItem<UserPlan>(getUserKey(STORAGE_KEYS.USER_PLAN), 'free');
   },
   setUserPlan(plan: UserPlan): void {
-    setItem(STORAGE_KEYS.USER_PLAN, plan);
+    setItem(getUserKey(STORAGE_KEYS.USER_PLAN), plan);
   },
 
-  // --- Theme Mode ---
+  // --- Theme Mode (Isolado por UID) ---
   getTheme(): ThemeMode {
-    const saved = getItem<ThemeMode | null>(STORAGE_KEYS.THEME, null);
+    const saved = getItem<ThemeMode | null>(getUserKey(STORAGE_KEYS.THEME), null);
     if (saved === 'light' || saved === 'dark') return saved;
     if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
       return 'dark';
@@ -395,10 +482,21 @@ export const StorageService = {
     return 'light';
   },
   setTheme(theme: ThemeMode): void {
-    setItem(STORAGE_KEYS.THEME, theme);
+    setItem(getUserKey(STORAGE_KEYS.THEME), theme);
   },
 
-  // --- Aggregated Stats ---
+  // --- Preferências de UI genéricas (aba ativa, filtro selecionado etc.) ---
+  // Isolado por UID como o resto do módulo. Chaves abertas (não cadastradas
+  // em STORAGE_KEYS) porque são muitas e de baixo risco — não são dado de
+  // conteúdo, só preferência de navegação. Ver usePersistedState.ts.
+  getUIState<T>(key: string, defaultValue: T): T {
+    return getItem<T>(getUserKey(`synapse_ui_${key}_v1`), defaultValue);
+  },
+  setUIState<T>(key: string, value: T): void {
+    setItem(getUserKey(`synapse_ui_${key}_v1`), value);
+  },
+
+  // --- Aggregated Stats (Calculado dinamicamente em memória - sem criação de chaves extras) ---
   getStats(): UserStats {
     return this.getUserStats();
   },
@@ -437,10 +535,174 @@ export const StorageService = {
     return this.getSimulados();
   },
 
-
   // --- Reset to Factory Defaults ---
   resetAllData(): void {
-    localStorage.clear();
+    if (currentUserId) {
+      // Limpa apenas dados do usuário ativo
+      const userIsolatedKeys = [
+        STORAGE_KEYS.FLASHCARDS,
+        STORAGE_KEYS.ANSWERS,
+        STORAGE_KEYS.READING_PROGRESS,
+        STORAGE_KEYS.BOOKMARKS,
+        STORAGE_KEYS.NOTES,
+        STORAGE_KEYS.NOTES_BASE_VERSION,
+        STORAGE_KEYS.SIMULADOS,
+        STORAGE_KEYS.USER_PLAN,
+        STORAGE_KEYS.ERROR_LOG,
+        STORAGE_KEYS.HIGHLIGHTS,
+        STORAGE_KEYS.THEME,
+      ];
+      userIsolatedKeys.forEach((k) => localStorage.removeItem(getUserKey(k)));
+    } else {
+      localStorage.clear();
+    }
+  },
+
+  // --- Migration Utilities (Seguras, com validação prévia e opção de manter cópia) ---
+  checkLegacyDataSummary(uid: string): MigrationSummary {
+    const migrationFlagKey = `synapse_${uid}_migration_handled`;
+    if (localStorage.getItem(migrationFlagKey)) {
+      return {
+        hasLegacyData: false,
+        answersCount: 0,
+        flashcardsCount: 0,
+        simuladosCount: 0,
+        bookmarksCount: 0,
+        notesCount: 0,
+        readingProgressCount: 0,
+      };
+    }
+
+    const answersRaw = localStorage.getItem(STORAGE_KEYS.ANSWERS);
+    let answersCount = 0;
+    if (answersRaw) {
+      try {
+        answersCount = Object.keys(JSON.parse(answersRaw)).length;
+      } catch {
+        // ignore parse error
+      }
+    }
+
+    const flashcardsRaw = localStorage.getItem(STORAGE_KEYS.FLASHCARDS);
+    let flashcardsCount = 0;
+    if (flashcardsRaw) {
+      try {
+        const fcList = JSON.parse(flashcardsRaw);
+        flashcardsCount = Array.isArray(fcList) ? fcList.length : 0;
+      } catch {
+        // ignore
+      }
+    }
+
+    const simuladosRaw = localStorage.getItem(STORAGE_KEYS.SIMULADOS);
+    let simuladosCount = 0;
+    if (simuladosRaw) {
+      try {
+        const sList = JSON.parse(simuladosRaw);
+        simuladosCount = Array.isArray(sList) ? sList.length : 0;
+      } catch {
+        // ignore
+      }
+    }
+
+    const bookmarksRaw = localStorage.getItem(STORAGE_KEYS.BOOKMARKS);
+    let bookmarksCount = 0;
+    if (bookmarksRaw) {
+      try {
+        const bm = JSON.parse(bookmarksRaw);
+        bookmarksCount = (bm.questions?.length || 0) + (bm.compendiums?.length || 0);
+      } catch {
+        // ignore
+      }
+    }
+
+    const notesRaw = localStorage.getItem(STORAGE_KEYS.NOTES);
+    let notesCount = 0;
+    if (notesRaw) {
+      try {
+        notesCount = Object.keys(JSON.parse(notesRaw)).length;
+      } catch {
+        // ignore
+      }
+    }
+
+    const progressRaw = localStorage.getItem(STORAGE_KEYS.READING_PROGRESS);
+    let readingProgressCount = 0;
+    if (progressRaw) {
+      try {
+        readingProgressCount = Object.keys(JSON.parse(progressRaw)).length;
+      } catch {
+        // ignore
+      }
+    }
+
+    const hasLegacy = answersCount > 0 || simuladosCount > 0 || bookmarksCount > 0 || notesCount > 0 || readingProgressCount > 0;
+
+    return {
+      hasLegacyData: hasLegacy,
+      answersCount,
+      flashcardsCount,
+      simuladosCount,
+      bookmarksCount,
+      notesCount,
+      readingProgressCount,
+    };
+  },
+
+  migrateLegacyData(uid: string, keepCopy: boolean): { success: boolean; error?: string } {
+    try {
+      const keysToMigrate = [
+        STORAGE_KEYS.FLASHCARDS,
+        STORAGE_KEYS.ANSWERS,
+        STORAGE_KEYS.READING_PROGRESS,
+        STORAGE_KEYS.BOOKMARKS,
+        STORAGE_KEYS.NOTES,
+        STORAGE_KEYS.NOTES_BASE_VERSION,
+        STORAGE_KEYS.SIMULADOS,
+        STORAGE_KEYS.USER_PLAN,
+        STORAGE_KEYS.ERROR_LOG,
+        STORAGE_KEYS.HIGHLIGHTS,
+        STORAGE_KEYS.THEME,
+      ];
+
+      // Passo 1: Copiar e validar cada item no namespace do usuário
+      const migratedKeys: string[] = [];
+      for (const legacyKey of keysToMigrate) {
+        const rawValue = localStorage.getItem(legacyKey);
+        if (rawValue !== null) {
+          // Validar JSON
+          JSON.parse(rawValue);
+          const userKey = `synapse_${uid}_${legacyKey.replace(/^synapse_/, '')}`;
+          localStorage.setItem(userKey, rawValue);
+
+          // Validar que foi gravado idêntico
+          const verified = localStorage.getItem(userKey);
+          if (verified !== rawValue) {
+            throw new Error(`Falha de integridade ao migrar ${legacyKey}`);
+          }
+          migratedKeys.push(legacyKey);
+        }
+      }
+
+      // Passo 2: Apenas se validação for 100% bem-sucedida e o usuário NÃO optou por manter cópia
+      if (!keepCopy) {
+        for (const k of migratedKeys) {
+          localStorage.removeItem(k);
+        }
+      }
+
+      // Passo 3: Marcar migração tratada
+      localStorage.setItem(`synapse_${uid}_migration_handled`, 'true');
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('Erro na migração de dados:', err);
+      return { success: false, error: err?.message || 'Erro desconhecido' };
+    }
+  },
+
+  dismissMigration(uid: string): void {
+    localStorage.setItem(`synapse_${uid}_migration_handled`, 'true');
   },
 
   // --- Export & Import JSON for CMS / Backup ---
@@ -450,7 +712,6 @@ export const StorageService = {
       themes: this.getThemes(),
       compendiums: this.getCompendiums(),
       questions: this.getQuestions(),
-      clinicalCases: this.getClinicalCases(),
       flashcards: this.getFlashcards(),
       exportedAt: new Date().toISOString(),
       version: '1.0.0',
@@ -465,8 +726,7 @@ export const StorageService = {
       if (data.themes) setItem(STORAGE_KEYS.THEMES, data.themes);
       if (data.compendiums) setItem(STORAGE_KEYS.COMPENDIUMS, data.compendiums);
       if (data.questions) setItem(STORAGE_KEYS.QUESTIONS, data.questions);
-      if (data.clinicalCases) setItem(STORAGE_KEYS.CLINICAL_CASES, data.clinicalCases);
-      if (data.flashcards) setItem(STORAGE_KEYS.FLASHCARDS, data.flashcards);
+      if (data.flashcards) this.saveFlashcards(data.flashcards);
       return true;
     } catch (e) {
       console.error('Failed to import database JSON', e);

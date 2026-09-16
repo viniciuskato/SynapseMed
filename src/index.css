@@ -4,44 +4,42 @@
 
 @layer base {
   :root {
-    --bg-canvas: #f4f0e8;
-    --bg-surface: #ffffff;
-    --bg-surface-secondary: #eee7d9;
-    --bg-surface-elevated: #ffffff;
-    --border-color: #ddd3bf;
-    --border-subtle: #eae1cf;
-    --text-primary: #2a2620;
-    --text-secondary: #6b6459;
-    --text-tertiary: #9e9890;
-    --ac: #6b4023;
-    --ac-hover: #54321b;
-    --ac-light: #f5ece4;
-    --ac2: #8a3620;
-    --ac2bg: #fbe2d8;
-    --ac-atlas: #2c5282;
-    --ac-atlas-bg: #e8f0fe;
-    --card-shadow: 0 1px 3px 0 rgb(42 38 32 / 0.06), 0 1px 2px -1px rgb(42 38 32 / 0.04);
+    --bg-canvas: #EDF2F7;
+    --bg-surface: #FFFFFF;
+    --bg-surface-secondary: #F1F5F9;
+    --bg-surface-elevated: #FFFFFF;
+    --border-color: #CBD5E1;
+    --border-subtle: #E2E8F0;
+    --text-primary: #0F172A;
+    --text-secondary: #334155;
+    --text-tertiary: #64748B;
+    --ac: #0D9488;
+    --ac-hover: #0F766E;
+    --ac-light: #F0FDFA;
+    --ac-amber: #D97706;
+    --ac-purple: #7C3AED;
+    --ac-emerald: #059669;
+    --card-shadow: 0 4px 20px -2px rgb(15 23 42 / 0.08);
     color-scheme: light;
   }
 
   .dark {
-    --bg-canvas: #111010;
-    --bg-surface: #1a1919;
-    --bg-surface-secondary: #222121;
-    --bg-surface-elevated: #282626;
-    --border-color: #333131;
-    --border-subtle: #242222;
-    --text-primary: #e2ddd6;
-    --text-secondary: #9e9890;
-    --text-tertiary: #6b655d;
-    --ac: #d4924a;
-    --ac-hover: #e5a45f;
-    --ac-light: #2c2014;
-    --ac2: #c0604a;
-    --ac2bg: #2a1810;
-    --ac-atlas: #5b8dd9;
-    --ac-atlas-bg: #0f1e38;
-    --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.3);
+    --bg-canvas: #070B14;
+    --bg-surface: #0E1726;
+    --bg-surface-secondary: #152238;
+    --bg-surface-elevated: #1B2B48;
+    --border-color: #243652;
+    --border-subtle: #19273D;
+    --text-primary: #F8FAFC;
+    --text-secondary: #94A3B8;
+    --text-tertiary: #64748B;
+    --ac: #14B8A6;
+    --ac-hover: #2DD4BF;
+    --ac-light: #0D2D35;
+    --ac-amber: #FBBF24;
+    --ac-purple: #A78BFA;
+    --ac-emerald: #34D399;
+    --card-shadow: 0 4px 24px -2px rgb(0 0 0 / 0.55);
     color-scheme: dark;
   }
 
@@ -49,7 +47,7 @@
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background-color: var(--bg-canvas);
     color: var(--text-primary);
-    transition: background-color 0.2s ease, color 0.2s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
     max-width: 100%;
     overflow-x: hidden;
   }
@@ -83,6 +81,39 @@ html {
   background-color: var(--ac2bg);
   color: var(--ac2);
   border: 1px solid var(--ac2);
+}
+
+/* Caixas de Destaque Editorial Médico Padronizadas */
+.box-gold-rule {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-left: 4px solid #10B981;
+  border-radius: 0 12px 12px 0;
+  padding: 14px 18px;
+}
+
+.box-trap {
+  background: rgba(244, 63, 94, 0.08);
+  border: 1px solid rgba(244, 63, 94, 0.35);
+  border-left: 4px solid #F43F5E;
+  border-radius: 0 12px 12px 0;
+  padding: 14px 18px;
+}
+
+.box-physio {
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-left: 4px solid #F59E0B;
+  border-radius: 0 12px 12px 0;
+  padding: 14px 18px;
+}
+
+.box-consensus {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-left: 4px solid #6366F1;
+  border-radius: 0 12px 12px 0;
+  padding: 14px 18px;
 }
 
 .pergunta-box {
@@ -157,3 +188,134 @@ html {
     display: none !important;
   }
 }
+
+/* ── Gamificação & Efeitos Convidativos ─────────────────── */
+@keyframes flamePulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px rgba(245, 158, 11, 0.4));
+  }
+  50% {
+    transform: scale(1.1);
+    filter: drop-shadow(0 0 6px rgba(245, 158, 11, 0.8));
+  }
+}
+
+.animate-flame {
+  animation: flamePulse 2s ease-in-out infinite;
+}
+
+.card-gamified {
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.card-gamified:hover {
+  transform: translateY(-2px);
+}
+
+.glass-pill {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.badge-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0) 100%);
+  background-size: 200% 100%;
+}
+
+/* ── Sombra flutuante ("floating blocks") ────────────────────────
+   Classes .elev-xs/sm/md/lg/xl/2xl (+ .hover\:elev-md) substituem as
+   utilidades shadow-* do Tailwind nos ~130 lugares do app que tinham
+   shadow-xs/sm/md/lg/xl/2xl (cards, modais, botões) — ver
+   src/components/**. Sistema de sombra em duas camadas: uma de
+   contato, mais próxima e nítida, e uma ambiente, mais larga e
+   difusa, em vez da sombra única e achatada do padrão Tailwind. É o
+   mesmo truque usado por painéis "soft UI": a camada de contato
+   ancora o bloco na superfície, a ambiente é que dá a sensação de
+   flutuação.
+
+   No modo escuro, uma sombra preta comum "some" (o fundo já é
+   escuro), então em vez de só escurecer mais, cada bloco ganha:
+   (1) uma sombra ainda mais profunda que o próprio fundo, pra criar
+   contraste real, e (2) uma linha de luz sutil no topo (inset), como
+   se pegasse um brilho de cima — é essa borda de luz que faz o bloco
+   parecer elevado em vez de só "mais escuro que o resto".
+
+   Por que nomes próprios (.elev-*) em vez de sobrescrever shadow-*
+   direto: no Tailwind v4 qualquer seletor com nome de utilidade
+   conhecida (mesmo fora de @layer) é reprocessado/descartado pelo
+   próprio compilador do Tailwind — confirmado via build (a
+   sobrescrita simplesmente não aparecia no CSS final). Nomes que o
+   Tailwind não reconhece não sofrem esse problema. */
+  .elev-xs {
+    box-shadow:
+      0 1px 2px rgb(15 23 42 / 0.04),
+      0 6px 16px -6px rgb(15 23 42 / 0.10);
+  }
+  .elev-sm {
+    box-shadow:
+      0 1px 2px rgb(15 23 42 / 0.05),
+      0 8px 20px -6px rgb(15 23 42 / 0.12);
+  }
+  .elev-md {
+    box-shadow:
+      0 2px 4px rgb(15 23 42 / 0.05),
+      0 14px 32px -10px rgb(15 23 42 / 0.16);
+  }
+  .elev-lg {
+    box-shadow:
+      0 4px 8px rgb(15 23 42 / 0.06),
+      0 24px 48px -14px rgb(15 23 42 / 0.20);
+  }
+  .elev-xl, .elev-2xl {
+    box-shadow:
+      0 8px 16px rgb(15 23 42 / 0.08),
+      0 32px 64px -16px rgb(15 23 42 / 0.24);
+  }
+  .hover\:elev-md:hover {
+    box-shadow:
+      0 2px 4px rgb(15 23 42 / 0.05),
+      0 14px 32px -10px rgb(15 23 42 / 0.16);
+  }
+
+  .dark .elev-xs {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.035),
+      0 1px 2px rgb(0 0 0 / 0.30),
+      0 6px 16px -6px rgb(0 0 0 / 0.45);
+  }
+  .dark .elev-sm {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.04),
+      0 1px 2px rgb(0 0 0 / 0.32),
+      0 8px 20px -6px rgb(0 0 0 / 0.50);
+  }
+  .dark .elev-md {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.05),
+      0 2px 4px rgb(0 0 0 / 0.35),
+      0 14px 32px -10px rgb(0 0 0 / 0.55),
+      0 0 32px -12px rgb(20 184 166 / 0.10);
+  }
+  .dark .elev-lg {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.06),
+      0 4px 8px rgb(0 0 0 / 0.38),
+      0 24px 48px -14px rgb(0 0 0 / 0.60),
+      0 0 48px -14px rgb(20 184 166 / 0.14);
+  }
+  .dark .elev-xl, .dark .elev-2xl {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.07),
+      0 8px 16px rgb(0 0 0 / 0.40),
+      0 32px 64px -16px rgb(0 0 0 / 0.65),
+      0 0 64px -16px rgb(20 184 166 / 0.16);
+  }
+  .dark .hover\:elev-md:hover {
+    box-shadow:
+      inset 0 1px 0 0 rgb(255 255 255 / 0.05),
+      0 2px 4px rgb(0 0 0 / 0.35),
+      0 14px 32px -10px rgb(0 0 0 / 0.55),
+      0 0 32px -12px rgb(20 184 166 / 0.10);
+  }
+

@@ -1,17 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  LayoutDashboard,
-  BookOpen,
-  HelpCircle,
-  Stethoscope,
-  Layers,
-  Timer,
-  BookMarked,
-  Settings,
-  Menu,
-  X,
-  Sparkles,
-  Search,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   UserPlan,
@@ -19,18 +8,79 @@ import {
   Theme,
   Compendium,
   Question,
-  ClinicalCase,
   Flashcard,
   UserStats,
   SimuladoConfig,
   ThemeMode,
+  MigrationSummary,
+  QuestionAnswerRecord,
+  LastReadingSession,
 } from './types';
 import { StorageService } from './services/storage';
+import { materialsRepository } from './repositories/MaterialsRepository';
+import { questionsRepository } from './repositories/QuestionsRepository';
+import { flashcardsRepository } from './repositories/FlashcardsRepository';
+import { answersRepository } from './repositories/AnswersRepository';
+import { registerSyncHandlers } from './services/syncHandlers';
 import { isCardDueToday } from './services/srsAlgorithm';
+import * as syncQueueDebug from './services/syncQueue';
+import { supabase as supabaseDebugClient } from './lib/supabaseClient';
+import { notesRepository } from './repositories/NotesRepository';
+import { bookmarksRepository } from './repositories/BookmarksRepository';
+import { readingProgressRepository } from './repositories/ReadingProgressRepository';
+import { errorNotebookRepository } from './repositories/ErrorNotebookRepository';
+import { simuladosRepository } from './repositories/SimuladosRepository';
+import { feedbackRepository } from './repositories/FeedbackRepository';
+import { questionReactionsRepository } from './repositories/QuestionReactionsRepository';
+import { buildSimuladoSelection, SimuladoSelectionResult } from './services/simuladoSelection';
+import { packIdForCompendium, SCOPE_CUSTOM, SCOPE_UNLINKED } from './services/thematicPacks';
 
-// Header & Sidebar
+registerSyncHandlers();
+
+// ============================================================================
+// Ponte de depuração SÓ PARA TESTE (Prompt 07-C2, ampliada no 07-E2), nunca
+// no bundle de produção: `import.meta.env.DEV` é `false` em `vite build` e o
+// bloco inteiro é eliminado por tree-shaking (confirmado com `npm run build`
+// — a string "__syncDebug" não aparece no bundle publicado). Permite a
+// testes reais de navegador (Playwright/Chromium) ler o estado real da fila
+// (`localStorage`/`syncQueue`), forçar condições de erro determinísticas e
+// chamar os repositórios das categorias 3-9 (`notesRepository` etc.,
+// ampliado no 07-F2 com `feedbackRepository`/`questionReactionsRepository`
+// para testar a RPC `submit_feedback`) do MESMO jeito que os componentes
+// React fazem — ainda é o caminho client-side
+// real (grava local -> enfileira -> handler -> RPC), só disparado pelo
+// console em vez de um clique, para cenários de concorrência entre
+// dispositivos que não têm como ser exercitados clicando um botão só (ex.:
+// duas edições offline da mesma nota). Nunca usado por código de produção —
+// só por scripts de teste externos ao repositório.
+// ============================================================================
+if (import.meta.env.DEV) {
+  (window as unknown as { __syncDebug?: unknown }).__syncDebug = {
+    ...syncQueueDebug,
+    supabase: supabaseDebugClient,
+    notesRepository,
+    bookmarksRepository,
+    readingProgressRepository,
+    errorNotebookRepository,
+    simuladosRepository,
+    feedbackRepository,
+    questionReactionsRepository,
+    storage: StorageService,
+  };
+}
+import { GamificationService } from './services/gamification';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { LoadingScreen } from './components/common/LoadingScreen';
+import { LoginView } from './components/auth/LoginView';
+import { EmailVerificationScreen } from './components/auth/EmailVerificationScreen';
+import { MigrateDataModal } from './components/auth/MigrateDataModal';
+import { AwaitingApprovalView } from './components/auth/AwaitingApprovalView';
+import { BlockedAccountView } from './components/auth/BlockedAccountView';
+import { FeedbackModal } from './components/feedback/FeedbackModal';
+
+// Header & Navigation
 import { Header } from './components/Header';
-import { Sidebar } from './components/Sidebar';
+import { MobileBottomNav } from './components/navigation/MobileBottomNav';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { PlanModal } from './components/PlanModal';
 
@@ -41,46 +91,227 @@ import { CompendiumReader } from './components/compendium/CompendiumReader';
 import { QuestionsView } from './components/questions/QuestionsView';
 import { SimuladoSession } from './components/questions/SimuladoSession';
 import { CreateSimuladoModal } from './components/questions/CreateSimuladoModal';
-import { ClinicalCasesView } from './components/clinical-cases/ClinicalCasesView';
-import { ClinicalCaseDetail } from './components/clinical-cases/ClinicalCaseDetail';
 import { FlashcardsView } from './components/flashcards/FlashcardsView';
 import { FlashcardReviewSession } from './components/flashcards/FlashcardReviewSession';
 import { CreateFlashcardModal } from './components/flashcards/CreateFlashcardModal';
-import { ErrorNotebookView } from './components/errors/ErrorNotebookView';
 import { SimuladosView } from './components/simulados/SimuladosView';
 import { AdminCMSView } from './components/admin/AdminCMSView';
+import { ThematicStudyView } from './components/thematic/ThematicStudyView';
 
-export default function App() {
+// Views que podem ser restauradas depois de um reload (Prompt 22-A). É uma
+// lista de PERMISSÃO: qualquer outro valor salvo (inclusive um valor futuro
+// ainda não conhecido, ou lixo gravado por outra versão) cai em 'dashboard'.
+// Sessões efêmeras ficam deliberadamente de fora — 'simulado-session',
+// 'flashcard-session' e 'compendium-reader' dependem de estado em memória
+// (fila de cards, seleção sorteada, compêndio ativo) que não sobrevive ao
+// reload; restaurá-las abriria uma tela sem o conteúdo correspondente.
+const PERSISTED_VIEWS = [
+  'dashboard',
+  'thematic-study',
+  'compendiums',
+  'questions',
+  'flashcards',
+  'simulados',
+  'errors',
+  'admin',
+] as const;
+
+function AuthenticatedApp() {
+  const { user, profile, loading, isEmailVerified } = useAuth();
+
   // Navigation State
   const [activeView, setActiveView] = useState<string>('dashboard');
-  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
+  // Estudo Temático: pack aberto (id derivado do compêndio). Fica aqui, e não
+  // dentro da view, porque o retorno ao pack depois de ler/responder/revisar
+  // depende dele, e porque a validação do id salvo precisa dos dados já
+  // carregados.
+  const [selectedPackId, setSelectedPackId] = useState<string | null>(null);
+  const [invalidSavedPackId, setInvalidSavedPackId] = useState<string | null>(null);
+  const [navStateRestored, setNavStateRestored] = useState(false);
+  // Escopo de material aplicado a Questões/Cards quando se chega pelo pack.
+  const [scopeCompendiumForQuestions, setScopeCompendiumForQuestions] = useState<string | undefined>(undefined);
+  const [scopeCompendiumForFlashcards, setScopeCompendiumForFlashcards] = useState<string | undefined>(undefined);
+  const [packReturnContext, setPackReturnContext] = useState<string | null>(null);
+  const [flashcardOriginView, setFlashcardOriginView] = useState<string>('flashcards');
 
   // Deep-link / Context State
   const [selectedCompendiumId, setSelectedCompendiumId] = useState<string | null>(null);
   const [selectedSectionId, setSelectedSectionId] = useState<string | undefined>(undefined);
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  // Qual tela da Biblioteca estava ativa por último — 'reader' enquanto o
+  // usuário está lendo um compêndio, mesmo depois de navegar temporariamente
+  // pra outra seção (Cards, Início...) e voltar. Só volta pra 'list' quando o
+  // usuário sai do leitor explicitamente (botão de voltar). Sem isso, clicar
+  // em "Biblioteca" na barra inferior sempre forçava a lista de seleção,
+  // mesmo no meio da leitura (bug relatado pelo usuário em 2026-09-11).
+  const [libraryLastView, setLibraryLastView] = useState<'list' | 'reader'>('list');
   const [activeSimuladoConfig, setActiveSimuladoConfig] = useState<SimuladoConfig | null>(null);
+  // Questões já filtradas/sorteadas/cortadas por config (Prompt 07-E5 — ver
+  // src/services/simuladoSelection.ts). Resolvida UMA VEZ em
+  // handleStartCustomSimulado, nunca recalculada a cada render, para que a
+  // MESMA sessão nunca re-sorteie (ver comentário da função para a garantia
+  // de estabilidade). `activeSimuladoSelection` guarda também quantas
+  // questões elegíveis existiam, para a UI avisar quando pedir mais do que
+  // o banco tem disponível.
+  const [activeSimuladoSelection, setActiveSimuladoSelection] = useState<SimuladoSelectionResult | null>(null);
   const [reviewCardsQueue, setReviewCardsQueue] = useState<Flashcard[]>([]);
   const [filterThemeForQuestions, setFilterThemeForQuestions] = useState<string | undefined>(undefined);
   const [filterThemeForFlashcards, setFilterThemeForFlashcards] = useState<string | undefined>(undefined);
   const [focusQuestionId, setFocusQuestionId] = useState<string | undefined>(undefined);
+  // "Treinar Apenas Questões Erradas" (Prompt 10-A): antes, esse botão criava
+  // um SimuladoConfig (isExamMode: false) e abria <SimuladoSession>, que tem
+  // cronômetro incondicional — pressão temporal indevida para o que é, na
+  // prática, revisão de estudo comum, não uma prova. Corrigido para abrir a
+  // MESMA <QuestionsView> usada no banco de questões (sem cronômetro), só
+  // pré-filtrada para status "incorreta". Ver AGENTS.md, armadilha nova
+  // registrada nesta sessão.
+  const [filterStatusForQuestions, setFilterStatusForQuestions] = useState<
+    'all' | 'unanswered' | 'correct' | 'incorrect' | 'bookmarked' | undefined
+  >(undefined);
+
+  // Tab interna da visão Início: Visão Geral vs Caderno de Erros integrado
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'errors'>('overview');
+
+  const handleSelectView = (view: string) => {
+    // Navegar pelo menu principal é sempre uma saída explícita do escopo de um
+    // pack — sem isso, "Questões" no menu continuaria mostrando só as questões
+    // do último material aberto, sem o usuário ter pedido esse recorte.
+    if (view === 'questions') {
+      setScopeCompendiumForQuestions(undefined);
+      setFilterThemeForQuestions(undefined);
+      setPackReturnContext(null);
+    }
+    if (view === 'flashcards') {
+      setScopeCompendiumForFlashcards(undefined);
+      setFilterThemeForFlashcards(undefined);
+      setPackReturnContext(null);
+    }
+    if (view === 'errors') {
+      setDashboardTab('errors');
+      setActiveView('dashboard');
+      return;
+    }
+    if (view === 'dashboard') {
+      setDashboardTab('overview');
+    }
+    if (view === 'compendiums' && libraryLastView === 'reader' && selectedCompendiumId) {
+      setActiveView('compendium-reader');
+      return;
+    }
+    setActiveView(view);
+  };
+
+  // Contexto de retorno ao revisar materiais na biblioteca
+  const [libraryOrigin, setLibraryOrigin] = useState<{
+    view: string;
+    questionId?: string;
+    label?: string;
+  } | null>(null);
 
   // Modals
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [isCreateSimuladoOpen, setIsCreateSimuladoOpen] = useState(false);
   const [isCreateFlashcardOpen, setIsCreateFlashcardOpen] = useState(false);
 
-  // Core Data State
+  // Migration State
+  const [migrationSummary, setMigrationSummary] = useState<MigrationSummary | null>(null);
+
+  // Sessão de leitura em andamento para retorno contextual fluido
+  const [lastReadingSession, setLastReadingSession] = useState<LastReadingSession | null>(() =>
+    StorageService.getLastReadingSession()
+  );
+
+  // Core Data State (carregados do StorageService / Supabase)
   const [theme, setTheme] = useState<ThemeMode>(() => StorageService.getTheme());
-  const [plan, setPlan] = useState<UserPlan>(StorageService.getUserPlan());
-  const [disciplines, setDisciplines] = useState<Discipline[]>(StorageService.getDisciplines());
-  const [themes, setThemes] = useState<Theme[]>(StorageService.getThemes());
-  const [compendiums, setCompendiums] = useState<Compendium[]>(StorageService.getCompendiums());
-  const [questions, setQuestions] = useState<Question[]>(StorageService.getQuestions());
-  const [clinicalCases, setClinicalCases] = useState<ClinicalCase[]>(StorageService.getClinicalCases());
-  const [flashcards, setFlashcards] = useState<Flashcard[]>(StorageService.getFlashcards());
-  const [stats, setStats] = useState<UserStats>(StorageService.getStats());
+  const [plan, setPlan] = useState<UserPlan>(() => StorageService.getUserPlan());
+  const [disciplines, setDisciplines] = useState<Discipline[]>([]);
+  const [themes, setThemes] = useState<Theme[]>([]);
+  const [compendiums, setCompendiums] = useState<Compendium[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
+  const [answers, setAnswers] = useState<Record<string, QuestionAnswerRecord>>({});
+  const [stats, setStats] = useState<UserStats>(() => StorageService.getStats());
+  const [dataLoading, setDataLoading] = useState(true);
+
+  const refreshData = useCallback(async () => {
+    const [nextDisciplines, nextThemes, nextCompendiums, nextQuestions, nextFlashcards, nextAnswers] =
+      await Promise.all([
+        materialsRepository.getDisciplines(),
+        materialsRepository.getThemes(),
+        materialsRepository.getCompendiums(),
+        questionsRepository.getQuestions(),
+        flashcardsRepository.getFlashcards(),
+        answersRepository.getAnswers(),
+      ]);
+    setDisciplines(nextDisciplines);
+    setThemes(nextThemes);
+    setCompendiums(nextCompendiums);
+    setQuestions(nextQuestions);
+    setFlashcards(nextFlashcards);
+    setAnswers(nextAnswers);
+    setStats(GamificationService.computeRealStats(nextAnswers, nextFlashcards));
+    setPlan(StorageService.getUserPlan());
+    setTheme(StorageService.getTheme());
+  }, []);
+
+  // Quando o usuário autenticado muda, recarrega os dados do namespace dele
+  useEffect(() => {
+    if (user?.id) {
+      setNavStateRestored(false);
+      setDataLoading(true);
+      refreshData().finally(() => setDataLoading(false));
+      const legacySummary = StorageService.checkLegacyDataSummary(user.id);
+      if (legacySummary.hasLegacyData) {
+        setMigrationSummary(legacySummary);
+      }
+    }
+  }, [user?.id, refreshData]);
+
+  // ── Restauração de navegação depois de um reload (Prompt 22-A) ─────────────
+  // Só roda depois que os dados do usuário terminaram de carregar: a view é
+  // validada contra a lista de permissão (e contra o papel real, no caso de
+  // 'admin'), e o pack salvo é validado contra os compêndios efetivamente
+  // disponíveis para ESTA conta agora — um material despublicado ou removido
+  // entre sessões não pode ser reaberto, e o usuário é avisado em vez de cair
+  // numa tela vazia. O estado é lido do StorageService, que já isola por UID.
+  useEffect(() => {
+    if (!user?.id || dataLoading || navStateRestored) return;
+
+    const savedView = StorageService.getUIState<string>('nav_active_view', 'dashboard');
+    const isAllowedView = (PERSISTED_VIEWS as readonly string[]).includes(savedView);
+    const canUseAdmin = profile?.role === 'admin' && profile?.status === 'active';
+    const restoredView = isAllowedView && (savedView !== 'admin' || canUseAdmin) ? savedView : 'dashboard';
+
+    const savedPackId = StorageService.getUIState<string | null>('nav_thematic_pack', null);
+    const isValidPack =
+      typeof savedPackId === 'string' &&
+      compendiums.some((c) => packIdForCompendium(c.id) === savedPackId);
+
+    setActiveView(restoredView);
+    if (isValidPack) {
+      setSelectedPackId(savedPackId);
+    } else if (typeof savedPackId === 'string' && savedPackId !== '') {
+      setSelectedPackId(null);
+      setInvalidSavedPackId(savedPackId);
+    }
+    setNavStateRestored(true);
+  }, [user?.id, dataLoading, navStateRestored, compendiums, profile?.role, profile?.status]);
+
+  // Persistência só começa depois da restauração — gravar antes sobrescreveria
+  // o valor salvo com o 'dashboard' do estado inicial.
+  useEffect(() => {
+    if (!navStateRestored) return;
+    StorageService.setUIState(
+      'nav_active_view',
+      (PERSISTED_VIEWS as readonly string[]).includes(activeView) ? activeView : 'dashboard'
+    );
+  }, [activeView, navStateRestored]);
+
+  useEffect(() => {
+    if (!navStateRestored) return;
+    StorageService.setUIState('nav_thematic_pack', selectedPackId);
+  }, [selectedPackId, navStateRestored]);
 
   // Dark Mode synchronization
   useEffect(() => {
@@ -92,20 +323,22 @@ export default function App() {
     StorageService.setTheme(theme);
   }, [theme]);
 
+  // Atualizar sessão de leitura ativa sempre que trocar de tela ou focar na aba
+  useEffect(() => {
+    setLastReadingSession(StorageService.getLastReadingSession());
+  }, [activeView]);
+
+  useEffect(() => {
+    const handleFocus = () => {
+      setLastReadingSession(StorageService.getLastReadingSession());
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
   const handleToggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
-
-  const refreshData = useCallback(() => {
-    setDisciplines(StorageService.getDisciplines());
-    setThemes(StorageService.getThemes());
-    setCompendiums(StorageService.getCompendiums());
-    setQuestions(StorageService.getQuestions());
-    setClinicalCases(StorageService.getClinicalCases());
-    setFlashcards(StorageService.getFlashcards());
-    setStats(StorageService.getStats());
-    setPlan(StorageService.getUserPlan());
-  }, []);
 
   // Keyboard shortcut for Ctrl+K
   useEffect(() => {
@@ -119,10 +352,52 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Se a tela de loading estiver ativa no AuthContext
+  if (loading) {
+    return <LoadingScreen message="Autenticando e inicializando ambiente seguro..." />;
+  }
+
+  // Se o usuário não estiver logado, exibe a tela de login
+  if (!user) {
+    return <LoginView />;
+  }
+
+  // Bloqueio de acesso enquanto o e-mail não estiver verificado
+  const hasVerifiedEmail = Boolean(user.email_confirmed_at) || isEmailVerified;
+  if (!hasVerifiedEmail) {
+    return <EmailVerificationScreen />;
+  }
+
+  // Acesso aguardando aprovação pela moderação (fluxo privado)
+  if (profile?.status === 'pending') {
+    return <AwaitingApprovalView />;
+  }
+
+  // Gate fail-closed: só `status === 'active'` acessa o app. Qualquer outro
+  // valor (`blocked`, ausente, ou um valor inesperado que não seja nem
+  // 'pending' nem 'active') cai aqui e NUNCA renderiza a aplicação normal —
+  // não é uma lista de exclusão de estados conhecidos, é uma lista de
+  // permissão de um único estado conhecido. O backend (RLS/RPCs) continua
+  // sendo a autoridade de segurança; este gate é defesa em profundidade da UI.
+  if (profile?.status !== 'active') {
+    return <BlockedAccountView />;
+  }
+
+  // Dados pessoais/de conteúdo (Supabase) ainda carregando
+  if (dataLoading) {
+    return <LoadingScreen message="Carregando seus dados de estudo..." />;
+  }
+
+  // `isAdmin` exige simultaneamente role E status ativo — um admin bloqueado
+  // nunca deve ser tratado como admin pela interface (embora o gate acima já
+  // impeça qualquer perfil não-`active` de chegar até aqui, esta checagem
+  // explícita evita que a UI administrativa dependa só do gate de nível
+  // superior para essa garantia).
+  const isAdmin = profile?.role === 'admin' && profile?.status === 'active';
+
   // Calculate badges
-  const answers = StorageService.getAnswers();
   const unansweredCount = questions.filter((q) => !answers[q.id]).length;
-  const errorCount = Object.values(answers).filter((a) => !a.isCorrect).length;
+  const errorCount = (Object.values(answers) as QuestionAnswerRecord[]).filter((a) => !a.isCorrect).length;
   const dueCardsCount = flashcards.filter((fc) => isCardDueToday(fc)).length;
 
   // Plan toggles
@@ -139,10 +414,59 @@ export default function App() {
   };
 
   // Navigators
-  const handleOpenCompendium = (compendiumId: string, sectionId?: string) => {
+  const handleOpenCompendium = (compendiumId?: string, sectionId?: string, originQuestionId?: string) => {
+    if (
+      activeView === 'questions' ||
+      activeView === 'errors' ||
+      activeView === 'simulado-session' ||
+      activeView === 'thematic-study'
+    ) {
+      setLibraryOrigin({
+        view: activeView,
+        questionId: originQuestionId,
+        label:
+          activeView === 'thematic-study'
+            ? 'Retornar ao Estudo Temático'
+            : activeView === 'errors'
+            ? 'Retornar ao Caderno de Erros'
+            : activeView === 'simulado-session'
+            ? 'Retornar ao Simulado'
+            : 'Retornar às Questões',
+      });
+    }
+
+    if (!compendiumId) {
+      setLibraryLastView('list');
+      setActiveView('compendiums');
+      return;
+    }
     setSelectedCompendiumId(compendiumId);
     setSelectedSectionId(sectionId);
+    setLibraryLastView('reader');
     setActiveView('compendium-reader');
+  };
+
+  const handleReturnToQuestions = () => {
+    if (libraryOrigin) {
+      const targetView = libraryOrigin.view;
+      if (libraryOrigin.questionId) {
+        setFocusQuestionId(libraryOrigin.questionId);
+      }
+      setLibraryOrigin(null);
+      setActiveView(targetView);
+    } else {
+      setActiveView('questions');
+    }
+  };
+
+  const handleResumeReading = () => {
+    const session = StorageService.getLastReadingSession();
+    if (session?.compendiumId) {
+      handleOpenCompendium(session.compendiumId, session.sectionId);
+    } else {
+      setLibraryLastView('list');
+      setActiveView('compendiums');
+    }
   };
 
   const handleOpenQuestionsForTheme = (themeId: string) => {
@@ -161,29 +485,91 @@ export default function App() {
     setActiveView('questions');
   };
 
-  const handleOpenCase = (caseId: string) => {
-    setSelectedCaseId(caseId);
-    setActiveView('clinical-case-detail');
+  const handleTrainMistakesUntimed = () => {
+    setFilterThemeForQuestions(undefined);
+    setFocusQuestionId(undefined);
+    setFilterStatusForQuestions('incorrect');
+    setActiveView('questions');
   };
 
-  const handleStartSRS = (cards?: Flashcard[]) => {
+  const handleStartSRS = (cards?: Flashcard[], originView?: string) => {
     const queue = cards && cards.length > 0 ? cards : flashcards.filter((fc) => isCardDueToday(fc));
     setReviewCardsQueue(queue.length > 0 ? queue : flashcards);
+    setFlashcardOriginView(originView ?? 'flashcards');
     setActiveView('flashcard-session');
   };
 
+  // ── Navegação a partir de um pack do Estudo Temático ───────────────────────
+  // Abre as telas canônicas (mesmos componentes, repositórios e gravações de
+  // sempre) recortadas pelo material do pack, com retorno explícito para cá.
+  const handleOpenPackQuestions = (packId: string, compendiumId: string) => {
+    setFilterThemeForQuestions(undefined);
+    setFocusQuestionId(undefined);
+    setScopeCompendiumForQuestions(compendiumId);
+    setPackReturnContext(packId);
+    setActiveView('questions');
+  };
+
+  const handleOpenPackFlashcards = (packId: string, compendiumId: string) => {
+    setFilterThemeForFlashcards(undefined);
+    setScopeCompendiumForFlashcards(compendiumId);
+    setPackReturnContext(packId);
+    setActiveView('flashcards');
+  };
+
+  // Conteúdo do tema sem material associado: mesmo tema, escopo "sem material"
+  // — nunca a lista inteira do tema, que reincluiria o conteúdo dos packs.
+  const handleOpenLooseThemeQuestions = (themeId: string) => {
+    setFilterThemeForQuestions(themeId);
+    setFocusQuestionId(undefined);
+    setScopeCompendiumForQuestions(SCOPE_UNLINKED);
+    setPackReturnContext(selectedPackId ?? 'lista');
+    setActiveView('questions');
+  };
+
+  const handleOpenLooseThemeFlashcards = (themeId: string) => {
+    setFilterThemeForFlashcards(themeId);
+    setScopeCompendiumForFlashcards(SCOPE_UNLINKED);
+    setPackReturnContext(selectedPackId ?? 'lista');
+    setActiveView('flashcards');
+  };
+
+  const handleOpenCustomFlashcards = () => {
+    setFilterThemeForFlashcards(undefined);
+    setScopeCompendiumForFlashcards(SCOPE_CUSTOM);
+    setPackReturnContext(selectedPackId ?? 'lista');
+    setActiveView('flashcards');
+  };
+
+  const handleReturnToThematicStudy = () => {
+    setScopeCompendiumForQuestions(undefined);
+    setScopeCompendiumForFlashcards(undefined);
+    setFilterThemeForQuestions(undefined);
+    setFilterThemeForFlashcards(undefined);
+    setPackReturnContext(null);
+    setActiveView('thematic-study');
+  };
+
   const handleStartCustomSimulado = (config: SimuladoConfig) => {
+    // Corrige a armadilha #17 (AGENTS.md): antes, a config era gravada mas
+    // as questões passadas para <SimuladoSession> eram o array cheio do
+    // banco, sem nenhum filtro. `buildSimuladoSelection` aplica disciplina/
+    // tema/dificuldade/ciclo/apenas-erros e corta por questionCount uma
+    // única vez aqui — o resultado fica em estado (não recalculado a cada
+    // render), preservando a mesma seleção/ordem enquanto esta sessão
+    // permanecer montada.
+    const selection = buildSimuladoSelection(questions, config, answers);
     setActiveSimuladoConfig(config);
+    setActiveSimuladoSelection(selection);
     setIsCreateSimuladoOpen(false);
     setActiveView('simulado-session');
   };
 
-  // Active Compendium / Case Objects
+  // Active Compendium Object
   const activeCompendium = compendiums.find((c) => c.id === selectedCompendiumId) || compendiums[0];
-  const activeClinicalCase = clinicalCases.find((c) => c.id === selectedCaseId) || clinicalCases[0];
 
   return (
-    <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-800 dark:text-slate-100 font-sans flex flex-col selection:bg-teal-500 selection:text-white antialiased transition-colors max-w-full overflow-x-hidden">
+    <div className="min-h-screen bg-[#F6F7F9] dark:bg-[#0B1220] text-[#172033] dark:text-[#E5E7EB] font-sans flex flex-col selection:bg-teal-500 selection:text-white antialiased transition-colors max-w-full overflow-x-hidden">
       {/* Top Application Header */}
       <Header
         currentPlan={plan}
@@ -192,101 +578,23 @@ export default function App() {
         onOpenSearch={() => setIsSearchOpen(true)}
         stats={stats}
         dueCardsCount={dueCardsCount}
+        errorLogCount={errorCount}
         activeView={activeView}
-        onSelectView={(v) => {
-          setActiveView(v);
-          setMobileMenuOpen(false);
-        }}
+        onSelectView={handleSelectView}
         theme={theme}
         onToggleTheme={handleToggleTheme}
+        onOpenFeedback={() => setIsFeedbackOpen(true)}
       />
 
-      {/* Main Body */}
-      <div className="flex-1 flex max-w-7xl w-full mx-auto min-w-0 overflow-x-hidden">
-        {/* Desktop Navigation Sidebar */}
-        <Sidebar
-          activeView={activeView}
-          onSelectView={(v) => {
-            setActiveView(v);
-            setMobileMenuOpen(false);
-          }}
-          currentPlan={plan}
-          onOpenPlanModal={() => setIsPlanModalOpen(true)}
-          errorLogCount={errorCount}
-          dueCardsCount={dueCardsCount}
-          unansweredQuestionsCount={unansweredCount}
-        />
-
-        {/* Mobile Navigation Drawer */}
-        {mobileMenuOpen && (
-          <div className="fixed inset-0 z-40 md:hidden bg-slate-900/60 backdrop-blur-xs flex">
-            <div className="w-4/5 max-w-xs bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 h-full p-4 flex flex-col justify-between shadow-2xl animate-in slide-in-from-left">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-                  <span className="font-bold text-slate-900 dark:text-slate-100 text-sm">Menu SynapseMed</span>
-                  <button
-                    onClick={() => setMobileMenuOpen(false)}
-                    className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <nav className="space-y-1 text-xs">
-                  {[
-                    { id: 'dashboard', label: 'Painel & Diagnóstico', icon: LayoutDashboard },
-                    { id: 'compendiums', label: 'Compêndios Teóricos', icon: BookOpen },
-                    { id: 'questions', label: 'Banco de Questões', icon: HelpCircle },
-                    { id: 'clinical-cases', label: 'Casos Clínicos', icon: Stethoscope },
-                    { id: 'flashcards', label: 'Flashcards SRS', icon: Layers },
-                    { id: 'simulados', label: 'Simulados & Listas', icon: Timer },
-                    { id: 'errors', label: 'Caderno de Erros', icon: BookMarked },
-                    { id: 'admin', label: 'Painel Admin CMS', icon: Settings },
-                  ].map((item) => {
-                    const Icon = item.icon;
-                    const isActive = activeView === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          setActiveView(item.id);
-                          setMobileMenuOpen(false);
-                        }}
-                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl font-semibold text-left transition-all cursor-pointer ${
-                          isActive
-                            ? 'bg-teal-700 text-white shadow-xs'
-                            : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        <Icon className="w-4 h-4" />
-                        <span>{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </nav>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Main Content Area */}
-        <main className="flex-1 p-3 sm:p-6 lg:p-8 min-w-0 max-w-full overflow-x-hidden overflow-y-auto">
-          {/* Mobile View Switcher Button */}
-          <div className="md:hidden mb-4 flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200 dark:border-slate-800">
-            <button
-              onClick={() => setMobileMenuOpen(true)}
-              className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer"
-            >
-              <Menu className="w-4 h-4 text-teal-700 dark:text-teal-400" />
-              <span>Navegar no Ambiente</span>
-            </button>
-            <button
-              onClick={() => setIsSearchOpen(true)}
-              className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
-            >
-              <Search className="w-4 h-4" />
-            </button>
-          </div>
+      {/* Main Workspace - Full Width with Centered Reading Layout */}
+      <div className="flex-1 flex flex-col w-full min-w-0">
+        <main
+          className={`flex-1 min-w-0 w-full ${
+            activeView === 'compendium-reader'
+              ? 'p-0'
+              : 'max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 pb-24 xl:pb-12'
+          }`}
+        >
 
           {/* View Router */}
           {activeView === 'dashboard' && (
@@ -296,12 +604,37 @@ export default function App() {
               questions={questions}
               compendiums={compendiums}
               flashcards={flashcards}
-              clinicalCases={clinicalCases}
-              onSelectView={setActiveView}
+              onSelectView={handleSelectView}
               onOpenCompendium={handleOpenCompendium}
               onOpenQuestion={handleOpenQuestion}
-              onOpenCase={handleOpenCase}
               onStartSRS={handleStartSRS}
+              initialTab={dashboardTab}
+              onTabChange={setDashboardTab}
+              onStartErrorSimulado={handleTrainMistakesUntimed}
+              onUpdate={refreshData}
+            />
+          )}
+
+          {activeView === 'thematic-study' && (
+            <ThematicStudyView
+              disciplines={disciplines}
+              themes={themes}
+              compendiums={compendiums}
+              questions={questions}
+              flashcards={flashcards}
+              answers={answers}
+              loading={dataLoading}
+              selectedPackId={selectedPackId}
+              onSelectPack={setSelectedPackId}
+              invalidSavedPackId={invalidSavedPackId}
+              onDismissInvalidPack={() => setInvalidSavedPackId(null)}
+              onOpenCompendium={(compendiumId, sectionId) => handleOpenCompendium(compendiumId, sectionId)}
+              onOpenPackQuestions={handleOpenPackQuestions}
+              onOpenPackFlashcards={handleOpenPackFlashcards}
+              onOpenThemeQuestions={handleOpenLooseThemeQuestions}
+              onOpenThemeFlashcards={handleOpenLooseThemeFlashcards}
+              onOpenCustomFlashcards={handleOpenCustomFlashcards}
+              onStartSRS={(cards) => handleStartSRS(cards, 'thematic-study')}
             />
           )}
 
@@ -312,6 +645,9 @@ export default function App() {
               themes={themes}
               onOpenCompendium={handleOpenCompendium}
               onOpenQuestionsForTheme={handleOpenQuestionsForTheme}
+              returnToQuestionsContext={libraryOrigin}
+              onReturnToQuestions={libraryOrigin ? handleReturnToQuestions : undefined}
+              lastReadingSession={lastReadingSession}
             />
           )}
 
@@ -320,10 +656,20 @@ export default function App() {
               compendium={activeCompendium}
               disciplines={disciplines}
               themes={themes}
-              onBack={() => setActiveView('compendiums')}
+              onBack={() => {
+                setLibraryLastView('list');
+                if (libraryOrigin) {
+                  handleReturnToQuestions();
+                } else {
+                  setActiveView('compendiums');
+                }
+              }}
               onOpenQuestionsForTheme={handleOpenQuestionsForTheme}
               onOpenFlashcardsForTheme={handleOpenFlashcardsForTheme}
               targetSectionId={selectedSectionId}
+              onSectionJumpHandled={() => setSelectedSectionId(undefined)}
+              returnToQuestionsContext={libraryOrigin}
+              onReturnToQuestions={libraryOrigin ? handleReturnToQuestions : undefined}
             />
           )}
 
@@ -332,30 +678,20 @@ export default function App() {
               questions={questions}
               disciplines={disciplines}
               themes={themes}
+              compendiums={compendiums}
               onOpenCompendium={handleOpenCompendium}
               onOpenCreateSimulado={() => setIsCreateSimuladoOpen(true)}
               filterThemeId={filterThemeForQuestions}
+              filterCompendiumId={scopeCompendiumForQuestions}
               focusQuestionId={focusQuestionId}
-            />
-          )}
-
-          {activeView === 'clinical-cases' && (
-            <ClinicalCasesView
-              cases={clinicalCases}
-              disciplines={disciplines}
-              themes={themes}
-              onOpenCase={handleOpenCase}
-              onOpenCompendium={handleOpenCompendium}
-            />
-          )}
-
-          {activeView === 'clinical-case-detail' && activeClinicalCase && (
-            <ClinicalCaseDetail
-              clinicalCase={activeClinicalCase}
-              disciplines={disciplines}
-              themes={themes}
-              onBack={() => setActiveView('clinical-cases')}
-              onOpenCompendium={handleOpenCompendium}
+              initialStatusFilter={filterStatusForQuestions}
+              onReturnToThematicStudy={packReturnContext ? handleReturnToThematicStudy : undefined}
+              returnToCompendiumContext={lastReadingSession}
+              onReturnToCompendium={() => {
+                if (lastReadingSession) {
+                  handleOpenCompendium(lastReadingSession.compendiumId, lastReadingSession.sectionId);
+                }
+              }}
             />
           )}
 
@@ -364,11 +700,14 @@ export default function App() {
               flashcards={flashcards}
               disciplines={disciplines}
               themes={themes}
+              compendiums={compendiums}
               onStartReview={(cards) => handleStartSRS(cards)}
               onOpenCreateModal={() => setIsCreateFlashcardOpen(true)}
               onOpenCompendium={handleOpenCompendium}
               onFlashcardUpdated={refreshData}
               filterThemeId={filterThemeForFlashcards}
+              filterCompendiumId={scopeCompendiumForFlashcards}
+              onReturnToThematicStudy={packReturnContext ? handleReturnToThematicStudy : undefined}
             />
           )}
 
@@ -377,9 +716,12 @@ export default function App() {
               cards={reviewCardsQueue}
               disciplines={disciplines}
               themes={themes}
+              compendiums={compendiums}
               onFinishSession={() => {
                 refreshData();
-                setActiveView('flashcards');
+                // Volta para onde a sessão começou: o pack continua selecionado,
+                // então "Estudo Temático" reabre exatamente o mesmo pack.
+                setActiveView(flashcardOriginView === 'thematic-study' ? 'thematic-study' : 'flashcards');
               }}
               onOpenCompendium={handleOpenCompendium}
             />
@@ -395,14 +737,18 @@ export default function App() {
             />
           )}
 
-          {activeView === 'simulado-session' && activeSimuladoConfig && (
+          {activeView === 'simulado-session' && activeSimuladoConfig && activeSimuladoSelection && (
             <SimuladoSession
               config={activeSimuladoConfig}
-              questions={questions}
+              questions={activeSimuladoSelection.selected}
+              eligibleCount={activeSimuladoSelection.eligibleCount}
+              requestedCount={activeSimuladoSelection.requestedCount}
               disciplines={disciplines}
               themes={themes}
+              compendiums={compendiums}
               onFinishSession={() => {
                 refreshData();
+                setActiveSimuladoSelection(null);
                 setActiveView('simulados');
               }}
               onOpenCompendium={handleOpenCompendium}
@@ -410,44 +756,77 @@ export default function App() {
           )}
 
           {activeView === 'errors' && (
-            <ErrorNotebookView
-              questions={questions}
-              disciplines={disciplines}
-              themes={themes}
-              onOpenCompendium={handleOpenCompendium}
-              onOpenQuestion={handleOpenQuestion}
-              onStartErrorSimulado={() => {
-                const mistakesConfig: SimuladoConfig = {
-                  id: `sim-mistakes-${Date.now()}`,
-                  name: 'Simulado de Caderno de Erros',
-                  disciplineIds: disciplines.map((d) => d.id),
-                  themeIds: [],
-                  difficulties: ['facil', 'medio', 'dificil'],
-                  cycles: ['basico', 'clinico', 'internato_residencia'],
-                  onlyMistakes: true,
-                  questionCount: 10,
-                  timeLimitMinutes: 20,
-                  isExamMode: false,
-                };
-                handleStartCustomSimulado(mistakesConfig);
-              }}
-              onUpdate={refreshData}
-            />
-          )}
-
-          {activeView === 'admin' && (
-            <AdminCMSView
+            <DashboardView
               disciplines={disciplines}
               themes={themes}
               questions={questions}
               compendiums={compendiums}
               flashcards={flashcards}
-              clinicalCases={clinicalCases}
-              onRefreshData={refreshData}
+              onSelectView={handleSelectView}
+              onOpenCompendium={handleOpenCompendium}
+              onOpenQuestion={handleOpenQuestion}
+              onStartSRS={handleStartSRS}
+              initialTab="errors"
+              onTabChange={(tab) => {
+                if (tab === 'overview') setActiveView('dashboard');
+                setDashboardTab(tab);
+              }}
+              onStartErrorSimulado={handleTrainMistakesUntimed}
+              onUpdate={refreshData}
             />
+          )}
+
+          {/* Admin CMS - Apenas para papel admin */}
+          {activeView === 'admin' && (
+            isAdmin ? (
+              <AdminCMSView
+                disciplines={disciplines}
+                themes={themes}
+                questions={questions}
+                compendiums={compendiums}
+                flashcards={flashcards}
+                onRefreshData={refreshData}
+              />
+            ) : (
+              <div
+                id="admin-access-denied-box"
+                className="p-8 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center max-w-lg mx-auto my-12 elev-md"
+              >
+                <div className="w-12 h-12 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto mb-4">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <h2 className="text-xl font-bold font-serif-reading text-slate-900 dark:text-white mb-2">
+                  Acesso Restrito ao Painel
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-6">
+                  Seu perfil atual é de <strong>Estudante</strong>. O Painel de Administração e Gestão de Conteúdo é reservado exclusivamente para administradores autorizados do corpo clínico.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('dashboard')}
+                  className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors elev-xs"
+                >
+                  Voltar ao Painel de Estudos
+                </button>
+              </div>
+            )
           )}
         </main>
       </div>
+
+      {/* Floating Thumb Dock & Navigation Hub */}
+      <MobileBottomNav
+        activeView={activeView}
+        onSelectView={handleSelectView}
+        dueCardsCount={dueCardsCount}
+        errorLogCount={errorCount}
+        lastReadingSession={lastReadingSession}
+        onResumeReading={handleResumeReading}
+        onOpenSearch={() => setIsSearchOpen(true)}
+        onOpenCreateSimulado={() => setIsCreateSimuladoOpen(true)}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+      />
 
       {/* Global Modals */}
       <GlobalSearchModal
@@ -455,7 +834,6 @@ export default function App() {
         onClose={() => setIsSearchOpen(false)}
         compendiums={compendiums}
         questions={questions}
-        clinicalCases={clinicalCases}
         flashcards={flashcards}
         onNavigateToCompendium={(cid, sid) => {
           handleOpenCompendium(cid, sid);
@@ -465,11 +843,7 @@ export default function App() {
           handleOpenQuestion(qid);
           setIsSearchOpen(false);
         }}
-        onNavigateToCase={(cid) => {
-          handleOpenCase(cid);
-          setIsSearchOpen(false);
-        }}
-        onNavigateToFlashcards={(tag) => {
+        onNavigateToFlashcards={() => {
           setActiveView('flashcards');
           setIsSearchOpen(false);
         }}
@@ -501,6 +875,33 @@ export default function App() {
           refreshData();
         }}
       />
+
+      <FeedbackModal
+        isOpen={isFeedbackOpen}
+        onClose={() => setIsFeedbackOpen(false)}
+      />
+
+      {/* Modal de Migração de Dados Pessoais */}
+      {migrationSummary && user?.id && (
+        <MigrateDataModal
+          summary={migrationSummary}
+          userUid={user.id}
+          userName={user.user_metadata?.display_name ?? null}
+          onComplete={() => {
+            setMigrationSummary(null);
+            refreshData();
+          }}
+        />
+      )}
+
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthenticatedApp />
+    </AuthProvider>
   );
 }

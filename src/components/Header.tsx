@@ -1,204 +1,401 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Search,
-  Flame,
-  Layers,
-  Crown,
-  Sparkles,
-  Settings,
+  Compass,
+  LayoutDashboard,
   BookOpen,
-  CheckCircle2,
+  HelpCircle,
+  Layers,
+  Flame,
   Sun,
   Moon,
+  LogOut,
+  User as UserIcon,
+  ChevronDown,
+  MessageSquarePlus,
+  Settings,
 } from 'lucide-react';
 import { UserPlan, UserStats, ThemeMode } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import { SyncStatusIndicator } from './common/SyncStatusIndicator';
+import { Logo } from './common/Logo';
 
 interface HeaderProps {
   currentPlan: UserPlan;
-  onOpenPlanModal: () => void;
-  onTogglePlanQuick: () => void;
+  onOpenPlanModal?: () => void;
+  onTogglePlanQuick?: () => void;
   onOpenSearch: () => void;
   stats: UserStats;
   dueCardsCount: number;
+  errorLogCount?: number;
   activeView: string;
   onSelectView: (view: string) => void;
   theme: ThemeMode;
   onToggleTheme: () => void;
+  onOpenFeedback?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  currentPlan,
-  onOpenPlanModal,
-  onTogglePlanQuick,
   onOpenSearch,
   stats,
-  dueCardsCount,
+  dueCardsCount = 0,
+  errorLogCount = 0,
   activeView,
   onSelectView,
   theme,
   onToggleTheme,
+  onOpenFeedback,
 }) => {
-  const accuracyPercent =
-    stats.totalAnswered > 0
-      ? Math.round((stats.totalCorrect / stats.totalAnswered) * 100)
-      : 0;
+  const { user, profile, logout } = useAuth();
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const observer = new ResizeObserver(() => {
+      document.documentElement.style.setProperty('--app-header-height', `${header.getBoundingClientRect().height}px`);
+    });
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const [resourcesOpen, setResourcesOpen] = useState(false);
+
+  // Fechar o menu de usuário com a tecla Escape
+  useEffect(() => {
+    if (!userDropdownOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setUserDropdownOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [userDropdownOpen]);
+
+  useEffect(() => {
+    if (!resourcesOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setResourcesOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [resourcesOpen]);
+
+  // Navegação principal (Prompt 22-A): Início, Estudo Temático e Recursos —
+  // este último agrupando os três acervos (Biblioteca, Questões, Cards).
+  const resourceItems = [
+    { id: 'compendiums', label: 'Biblioteca', icon: BookOpen, activeAlso: ['compendium-reader'] },
+    { id: 'questions', label: 'Questões', icon: HelpCircle, activeAlso: ['simulados', 'simulado-session'] },
+    { id: 'flashcards', label: 'Cards', icon: Layers, activeAlso: ['flashcard-session'] },
+  ];
+  const isResourceActive = resourceItems.some(
+    (item) => activeView === item.id || item.activeAlso.includes(activeView)
+  );
+  const navButtonClass = (active: boolean) =>
+    `min-h-11 px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer border ${
+      active
+        ? 'bg-teal-600/15 dark:bg-teal-400/20 text-teal-900 dark:text-teal-100 border-teal-600/40 dark:border-teal-400/50 shadow-2xs font-bold'
+        : 'text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#142038] border-transparent'
+    }`;
+
+  const displayName = profile?.displayName || user?.user_metadata?.display_name || 'Estudante';
+  const photoURL = profile?.photoURL || user?.user_metadata?.avatar_url || null;
+  const isAdmin = profile?.role === 'admin';
+
+  // Iniciais para fallback do avatar
+  const initials = displayName
+    .split(' ')
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 transition-colors max-w-full overflow-x-hidden">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
+    <header ref={headerRef} className="sticky top-0 z-30 bg-white/90 dark:bg-[#070B14]/90 backdrop-blur-xl border-b border-slate-300/80 dark:border-white/15 px-3 sm:px-6 lg:px-8 py-2.5 transition-colors max-w-full elev-xs">
+      <div className="max-w-[1720px] mx-auto flex items-center justify-between gap-1.5 sm:gap-3">
         {/* Left: Brand Identity */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
           <button
             onClick={() => onSelectView('dashboard')}
-            className="flex items-center gap-2 sm:gap-2.5 text-left group focus:outline-none cursor-pointer"
+            className="min-h-11 flex items-center gap-1.5 sm:gap-2.5 text-left group focus:outline-hidden cursor-pointer min-w-0"
           >
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-amber-900 dark:bg-[#d4924a] text-white dark:text-[#111010] flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform font-serif-reading font-bold text-base">
-              Ψ
-            </div>
-            <div>
-              <div className="flex items-center gap-1 sm:gap-1.5">
-                <span className="font-serif-reading font-bold text-base sm:text-lg tracking-tight text-stone-900 dark:text-[#e2ddd6] group-hover:text-amber-800 dark:group-hover:text-[#d4924a] transition-colors">
-                  Base de Estudos
-                </span>
-                <span className="hidden sm:inline-block text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 dark:bg-[#2a1810] text-amber-900 dark:text-[#d4924a] border border-amber-300 dark:border-[#d4924a]/40 font-mono-code">
-                  Medicina
-                </span>
-              </div>
-              <p className="text-[10px] text-stone-500 dark:text-stone-400 hidden sm:block font-sans">
-                Compêndios de Área & Mecanismos Fisiopatológicos
-              </p>
-            </div>
-          </button>
-        </div>
-
-        {/* Center: Global Search Bar Trigger */}
-        <div className="flex-1 max-w-md hidden md:block">
-          <button
-            onClick={onOpenSearch}
-            className="w-full flex items-center justify-between px-3.5 py-2 bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200/80 dark:hover:bg-slate-800 border border-slate-200/80 dark:border-slate-700/60 rounded-xl text-slate-500 dark:text-slate-400 text-sm transition-all text-left shadow-inner cursor-pointer"
-          >
-            <div className="flex items-center gap-2">
-              <Search className="w-4 h-4 text-slate-400 dark:text-slate-500" />
-              <span className="text-slate-500 dark:text-slate-400 text-xs sm:text-sm truncate">
-                Buscar compêndios, questões, temas, drogas...
+            <Logo className="w-8 h-8 rounded-xl elev-sm shadow-teal-600/30 group-hover:scale-105 transition-transform shrink-0" />
+            <div className="min-w-0">
+              <span className="font-serif font-bold text-sm sm:text-lg tracking-tight bg-gradient-to-r from-slate-900 to-teal-800 dark:from-white dark:to-teal-300 bg-clip-text text-transparent truncate block">
+                NexusMed
               </span>
             </div>
-            <kbd className="hidden lg:inline-flex items-center gap-0.5 px-2 py-0.5 text-[11px] font-mono text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded shadow-xs">
-              Ctrl K
-            </kbd>
           </button>
         </div>
 
-        {/* Right: Metrics, Plan Badges & Theme Toggle */}
-        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
-          {/* Mobile search button */}
+        {/* Center: Navegação principal (desktop/tablet) */}
+        <nav
+          id="header-main-nav"
+          aria-label="Navegação principal"
+          className="hidden md:flex items-center gap-1 min-w-0"
+        >
           <button
-            onClick={onOpenSearch}
-            className="p-1.5 sm:p-2 md:hidden text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
-            title="Buscar"
+            type="button"
+            id="nav-dashboard"
+            onClick={() => onSelectView('dashboard')}
+            aria-current={activeView === 'dashboard' ? 'page' : undefined}
+            className={navButtonClass(activeView === 'dashboard')}
           >
-            <Search className="w-4 h-4 sm:w-5 sm:h-5" />
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            <span>Início</span>
           </button>
 
-          {/* Quick Streak & SRS Due Pill */}
-          <div className="hidden sm:flex items-center gap-2 bg-slate-100/90 dark:bg-slate-800/80 border border-slate-200/70 dark:border-slate-700/60 rounded-xl px-2.5 py-1 text-xs font-medium text-slate-700 dark:text-slate-200">
-            <div
-              className="flex items-center gap-1 text-amber-600 dark:text-amber-400"
-              title="Ofensiva de estudos diários"
-            >
-              <Flame className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
-              <span>{stats.streakDays}d</span>
-            </div>
-            <span className="text-slate-300 dark:text-slate-700">|</span>
+          <button
+            type="button"
+            id="nav-thematic-study"
+            onClick={() => onSelectView('thematic-study')}
+            aria-current={activeView === 'thematic-study' ? 'page' : undefined}
+            className={navButtonClass(activeView === 'thematic-study')}
+          >
+            <Compass className="w-3.5 h-3.5" />
+            <span>Estudo Temático</span>
+          </button>
+
+          <div className="relative">
             <button
-              onClick={() => onSelectView('flashcards')}
-              className="flex items-center gap-1 text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
-              title="Cards para revisar hoje"
+              type="button"
+              id="nav-resources"
+              onClick={() => setResourcesOpen((prev) => !prev)}
+              aria-haspopup="menu"
+              aria-expanded={resourcesOpen}
+              aria-controls="nav-resources-menu"
+              className={navButtonClass(isResourceActive)}
             >
-              <Layers className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
-              <span>{dueCardsCount} cards</span>
+              <Layers className="w-3.5 h-3.5" />
+              <span>Recursos</span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 transition-transform ${resourcesOpen ? 'rotate-180' : ''}`}
+                aria-hidden="true"
+              />
             </button>
-            {stats.totalAnswered > 0 && (
+
+            {resourcesOpen && (
               <>
-                <span className="text-slate-300 dark:text-slate-700">|</span>
                 <div
-                  className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400"
-                  title="Taxa de acertos geral"
+                  className="fixed inset-0 z-40"
+                  onClick={() => setResourcesOpen(false)}
+                  aria-hidden="true"
+                />
+                <div
+                  id="nav-resources-menu"
+                  role="menu"
+                  aria-orientation="vertical"
+                  aria-labelledby="nav-resources"
+                  className="absolute left-0 mt-2 w-52 rounded-xl bg-white dark:bg-[#111827] border border-[#E2E8F0] dark:border-[#263244] elev-lg py-2 z-50"
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                  <span>{accuracyPercent}%</span>
+                  {resourceItems.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="menuitem"
+                        id={`nav-resources-${item.id}`}
+                        onClick={() => {
+                          setResourcesOpen(false);
+                          onSelectView(item.id);
+                        }}
+                        className="w-full text-left px-4 py-2 text-xs text-[#172033] dark:text-[#E5E7EB] hover:bg-slate-100 dark:hover:bg-[#182235] flex items-center gap-2 cursor-pointer"
+                      >
+                        <Icon className="w-3.5 h-3.5 text-teal-700 dark:text-teal-400" />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </>
             )}
           </div>
+        </nav>
+
+        {/* Right: Quick Search, Streak, Theme Toggle, Profile */}
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          {/* Quick Search Button (Desktop) */}
+          <button
+            onClick={onOpenSearch}
+            style={{ minWidth: 44, minHeight: 44 }}
+            className="hidden sm:flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-white dark:bg-[#142038] hover:bg-slate-50 dark:hover:bg-[#1A2845] border border-slate-300 dark:border-[#263750] text-xs text-slate-600 dark:text-slate-300 transition-all cursor-pointer shadow-2xs group"
+            title="Buscar compêndios, questões ou temas (Ctrl + K)"
+          >
+            <Search className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors" />
+            <span className="hidden xl:inline text-slate-700 dark:text-slate-200 font-semibold">
+              Buscar
+            </span>
+            <kbd className="hidden md:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-[#0F172A] border border-slate-300/80 dark:border-[#243452] rounded-md">
+              Ctrl K
+            </kbd>
+          </button>
+
+          {/* Mobile search icon button */}
+          <button
+            onClick={onOpenSearch}
+            style={{ minWidth: 44, minHeight: 44 }}
+            className="p-2 sm:hidden text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-[#142038] rounded-xl cursor-pointer"
+            title="Buscar"
+          >
+            <Search className="w-4 h-4" />
+          </button>
+
+          <SyncStatusIndicator />
+
+          {/* Gamified Streak Flame Badge */}
+          <div
+            className="flex items-center gap-1 sm:gap-1.5 px-1.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-amber-500/15 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-bold shadow-2xs shrink-0"
+            title={`${stats.streakDays} dias seguidos de estudo`}
+          >
+            <Flame className="w-4 h-4 fill-amber-500 text-amber-500 animate-flame shrink-0" />
+            <span className="tabular-nums">{stats.streakDays}d</span>
+          </div>
+
+          {/* Direct Feedback / Report Error Button */}
+          {onOpenFeedback && (
+            <button
+              onClick={onOpenFeedback}
+              id="header-feedback-btn"
+              style={{ minHeight: 44 }}
+              className="px-2 sm:px-3 py-1.5 rounded-xl border border-slate-200 dark:border-[#243452] bg-white dark:bg-[#0F172A] hover:bg-slate-100 dark:hover:bg-[#142038] text-slate-600 dark:text-slate-400 hover:text-teal-700 dark:hover:text-teal-300 transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs shrink-0"
+              title="Enviar feedback ou reportar erro"
+              aria-label="Enviar feedback ou reportar erro"
+            >
+              <MessageSquarePlus className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+              <span className="hidden xl:inline text-xs font-semibold">Feedback</span>
+            </button>
+          )}
 
           {/* Theme Selector (Claro / Escuro) */}
           <button
             onClick={onToggleTheme}
             id="header-theme-toggle"
-            className="p-1.5 sm:p-2 rounded-xl border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 transition-all cursor-pointer flex items-center justify-center shadow-xs"
-            title={theme === 'dark' ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro'}
+            style={{ minWidth: 44, minHeight: 44 }}
+            className="p-2 rounded-xl border border-slate-200 dark:border-[#243452] bg-white dark:bg-[#0F172A] hover:bg-slate-100 dark:hover:bg-[#142038] text-slate-600 dark:text-slate-400 transition-colors cursor-pointer flex items-center justify-center shadow-2xs shrink-0"
+            title={theme === 'dark' ? 'Mudar para Modo Claro' : 'Mudar para Modo Escuro'}
             aria-label={theme === 'dark' ? 'Ativar modo claro' : 'Ativar modo escuro'}
           >
             {theme === 'dark' ? (
-              <Sun className="w-4 h-4 text-amber-400 hover:rotate-45 transition-transform" />
+              <Sun className="w-4 h-4 text-amber-400" />
             ) : (
-              <Moon className="w-4 h-4 text-slate-600 hover:-rotate-12 transition-transform" />
+              <Moon className="w-4 h-4 text-slate-700" />
             )}
           </button>
 
-          {/* Plan Badge / Switcher */}
-          {currentPlan === 'premium' ? (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={onOpenPlanModal}
-                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-semibold text-xs shadow-xs hover:shadow-amber-500/20 hover:brightness-105 transition-all cursor-pointer"
-              >
-                <Crown className="w-3.5 h-3.5 fill-slate-950" />
-                <span className="hidden sm:inline">PREMIUM PRO</span>
-                <span className="sm:hidden text-[11px] font-bold">PRO</span>
-              </button>
-              <button
-                onClick={onTogglePlanQuick}
-                className="text-[10px] text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 underline px-1 hidden xl:inline-block cursor-pointer"
-                title="Alternar para testar modo gratuito"
-              >
-                Simular Free
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={onOpenPlanModal}
-                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-medium text-xs shadow-xs transition-all animate-pulse cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Assinar Premium</span>
-                <span className="sm:hidden text-[11px] font-bold">Upgrade</span>
-              </button>
-              <button
-                onClick={onTogglePlanQuick}
-                className="text-[10px] text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 underline px-1 hidden xl:inline-block cursor-pointer"
-                title="Alternar para testar modo premium"
-              >
-                Simular Pro
-              </button>
-            </div>
-          )}
+          {/* Perfil do Usuário Autenticado */}
+          <div className="relative">
+            <button
+              id="btn-user-profile-menu"
+              type="button"
+              onClick={() => setUserDropdownOpen((prev) => !prev)}
+              aria-haspopup="menu"
+              aria-expanded={userDropdownOpen}
+              aria-controls="user-profile-dropdown"
+              aria-label="Menu do perfil de usuário"
+              style={{ minWidth: 44, minHeight: 44 }}
+              className="flex items-center gap-1 sm:gap-2 p-1.5 sm:px-2 sm:py-1 rounded-lg border border-[#E2E8F0] dark:border-[#263244] hover:bg-slate-50 dark:hover:bg-[#182235] transition-colors cursor-pointer bg-white dark:bg-[#111827] focus:outline-hidden shrink-0"
+              title="Menu do Usuário"
+            >
+              {photoURL ? (
+                <img
+                  src={photoURL}
+                  alt={displayName}
+                  referrerPolicy="no-referrer"
+                  className="w-6 h-6 sm:w-7 sm:h-7 rounded-full object-cover border border-[#E2E8F0] dark:border-[#263244]"
+                />
+              ) : (
+                <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-teal-700 dark:bg-teal-600 text-white flex items-center justify-center text-xs font-bold">
+                  {initials || <UserIcon className="w-3.5 h-3.5" />}
+                </div>
+              )}
+              <span className="hidden md:inline text-xs font-medium text-[#172033] dark:text-[#E5E7EB] max-w-[100px] truncate">
+                {displayName}
+              </span>
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-[#64748B] dark:text-[#94A3B8] transition-transform ${
+                  userDropdownOpen ? 'rotate-180' : ''
+                }`}
+                aria-hidden="true"
+              />
+            </button>
 
-          {/* Admin CMS Direct Shortcut */}
-          <button
-            onClick={() => onSelectView('admin')}
-            className={`p-1.5 sm:p-2 rounded-xl border text-xs font-medium transition-colors items-center gap-1 cursor-pointer hidden sm:flex ${
-              activeView === 'admin'
-                ? 'bg-slate-900 text-white border-slate-900 dark:bg-teal-600 dark:border-teal-500'
-                : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700/80 hover:bg-slate-100 dark:hover:bg-slate-700'
-            }`}
-            title="Painel Administrativo & Editor de Conteúdo Médico"
-          >
-            <Settings className="w-4 h-4" />
-            <span className="hidden lg:inline">Admin CMS</span>
-          </button>
+            {/* Dropdown Menu com Perfil, Beta Privada e Botão Sair */}
+            {userDropdownOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setUserDropdownOpen(false)}
+                  aria-hidden="true"
+                />
+                <div
+                  id="user-profile-dropdown"
+                  role="menu"
+                  aria-orientation="vertical"
+                  aria-labelledby="btn-user-profile-menu"
+                  className="absolute right-0 mt-2 w-56 rounded-xl bg-white dark:bg-[#111827] border border-[#E2E8F0] dark:border-[#263244] elev-lg py-2 z-50 transition-colors"
+                >
+                  <div className="px-4 py-2 border-b border-[#E2E8F0] dark:border-[#263244]">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-[#172033] dark:text-[#E5E7EB] truncate">
+                        {displayName}
+                      </p>
+                      <span className="text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#182235] text-[#64748B] dark:text-[#94A3B8] border border-[#E2E8F0] dark:border-[#263244]">
+                        Beta privada
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#64748B] dark:text-[#94A3B8] truncate mt-0.5">
+                      {user?.email || profile?.email || 'Conta vinculada'}
+                    </p>
+                  </div>
+
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        onSelectView('admin');
+                        setUserDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs text-[#172033] dark:text-[#E5E7EB] hover:bg-slate-100 dark:hover:bg-[#182235] flex items-center gap-2 cursor-pointer"
+                    >
+                      <Settings className="w-3.5 h-3.5 text-[#64748B] dark:text-[#94A3B8]" />
+                      <span>Área Editorial / CMS</span>
+                    </button>
+                  )}
+
+                  {onOpenFeedback && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setUserDropdownOpen(false);
+                        onOpenFeedback();
+                      }}
+                      className="w-full text-left px-4 py-2 text-xs text-[#172033] dark:text-[#E5E7EB] hover:bg-slate-100 dark:hover:bg-[#182235] flex items-center gap-2 cursor-pointer"
+                    >
+                      <MessageSquarePlus className="w-3.5 h-3.5 text-teal-700 dark:text-teal-400" />
+                      <span>Enviar feedback</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    role="menuitem"
+                    id="btn-logout"
+                    onClick={async () => {
+                      setUserDropdownOpen(false);
+                      await logout();
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 flex items-center gap-2 cursor-pointer border-t border-[#E2E8F0] dark:border-[#263244] mt-1"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Sair</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </header>
