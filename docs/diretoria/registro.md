@@ -1432,3 +1432,64 @@ aprendizagem longitudinal/pauta editorial não implementados.
 
 **Smoke de produção e limpeza**: ver seção seguinte com o resultado
 detalhado (conta administrativa descartável, criada e removida ao final).
+
+## Achado + correção da diretoria — reconciliação do repositório GitHub, 2026-09-16
+
+**Contexto**: fora da fila de prompts executivos (37-A, sprint de estudo da
+AS1, estava em andamento). Durante uma pergunta de infra sobre como ver o
+feedback/explicação de questões sem depender de automação de browser, a
+sessão de diretoria criou `scripts/read-question-feedback.ts` (leitura
+direta via `SUPABASE_SERVICE_ROLE_KEY`, sem RPC `get_question_review`, sem
+Playwright, sem browser) e, ao tentar testá-lo, não encontrou
+`VITE_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` em nenhuma das cópias
+locais do projeto.
+
+**Achado**: o repositório GitHub `github.com/viniciuskato/SynapseMed`
+(nome antigo do projeto, mantido no GitHub mesmo após o produto passar a
+se chamar NexusMed) estava travado em 2 commits iniciais
+(`eaabea8`/`2b34599`, projeto ainda nomeado "MedFlow Hub"), sem nenhum
+commit do desenvolvimento real (CMS de revisão humana, proveniência/
+atestação de conteúdo — inclusive o 23-B/23-C registrados aqui —,
+sincronização offline, etc.). Existiam 5 cópias locais desencontradas em
+`C:\Users\vinic\OneDrive\` (`nexusmed-aistudio-audit-20260914`,
+`nexusmed-aistudio-clean-base-20260915`,
+`nexusmed-aistudio-continuar-leitura-20260915`,
+`nexusmed-review-20260910`, `nexusmed-review-latest`); só duas tinham
+`.git`, e ambas apontavam uma para a outra como remoto **local**, nenhuma
+para o GitHub. Ou seja, o histórico registrado neste arquivo nunca havia
+sido sincronizado com o único remoto real do projeto — risco mais grave
+do que o item 11 já registrado na auditoria de 2026-09-15 (só "branch sem
+proteção"): não havia remoto funcional nenhum para proteger.
+
+**Correção aplicada**: identificada `nexusmed-aistudio-continuar-leitura-20260915`
+como a cópia local mais avançada (maior `mtime` em `AGENTS.md`/
+`docs/diretoria/registro.md`, 15/09 12:41, terminando no 23-B publicado).
+Clonado `SynapseMed.git` limpo, copiado o conteúdo dessa cópia por cima
+(excluindo `node_modules`, `dist`, `.env*` e os dois exports binários do
+AI Studio — `nexusmed-ui-2026-09-15-01-corrigido.zip` e
+`nexusmed-ui-clean.zip`, mantidos só localmente), revisado `git status`
+antes de commitar (176 arquivos: 141 novos, 28 modificados, 7 exclusões —
+todas do stub "MedFlow Hub" antigo, nada de conteúdo clínico ou de
+questões perdido) e checado explicitamente ausência de segredo staged.
+Commit único `b13022a`, `git push origin main` sem force (histórico
+divergente, mas fast-forward seguro por não haver commits locais a
+preservar além dos dois iniciais já obsoletos).
+
+**Pendências**: (1) `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`/
+`SUPABASE_SERVICE_ROLE_KEY` ainda precisam ser configurados num
+`.env.local` novo (usuário vai buscar no painel do Supabase — nenhuma
+sessão de IA deve procurar ou tentar reconstruir essa credencial); (2)
+renomear o repositório de `SynapseMed` para `NexusMed` no GitHub — ação
+manual, sem `gh` CLI disponível neste ambiente; (3) as 4 cópias locais
+não usadas nesta reconciliação (`nexusmed-aistudio-audit-20260914`,
+`nexusmed-aistudio-clean-base-20260915`, `nexusmed-review-20260910`,
+`nexusmed-review-latest`) continuam existindo soltas — decidir se são
+apagadas ou arquivadas para não repetir esse desencontro; (4) confirmar
+com uma sessão executiva que `npm ci && npm run verify` roda limpo a
+partir do que foi enviado (não foi rodado nesta sessão de diretoria,
+que não executa build/testes).
+
+**Restrições respeitadas**: sem force push; sem alteração de schema,
+dado ou produto em produção; nenhuma credencial buscada ou inferida por
+IA; exports binários deixados fora do controle de versão por decisão
+explícita, não por omissão.
